@@ -1,0 +1,4 @@
+initial step size: 0.01
+target_acc_prob: 0.15
+burn_in: 10,000
+iterations: 200,000

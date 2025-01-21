@@ -118,9 +118,6 @@ truescatter = comp / factor
 import pyro
 import pyro.distributions as dist
 from scipy.stats import norm as normal
-import math
-from numbers import Number, Real
-from scipy import special
 
 # Define the model
 def model(training_data):
@@ -141,6 +138,7 @@ def model(training_data):
     def surfaceFunction(x):
         return param1.item()*np.cos((2*np.pi/param2.item())*x + param3.item())
 
+    # Determine the sampled parameter responses and compare to observed data
     KA_Object = Directed2DVectorised(SourceLocation,RecLoc,surfaceFunction,14_000,0.02,np.pi/3,'simp',userMinMax= [-1,1] ,userSamples=14_000,absolute=False)
     scatter = KA_Object.Scatter(absolute=True,norm=False)
     scatter = np.array([scatter]).flatten()/factor
@@ -162,11 +160,12 @@ true = trueF(xsp)
 
 # Run MCMC iterations
 from pyro.infer import MCMC, NUTS, RandomWalkKernel
+from pyro.infer.mcmc.hmc import HMC
 
 sample_count = 200_000
 burn_in_count = 10_000
 run_model = True
-kernel = "nuts"
+kernel = "hmc"
 posterior_samples = np.array([])
 
 if (run_model):
@@ -178,8 +177,14 @@ if (run_model):
         posterior_samples = mcmc.get_samples()
         print(mcmc.summary())
     elif kernel == "nuts":
-        nuts_kernel = NUTS(model, target_accept_prob=0.15, step_size=0.01, adapt_step_size=True, jit_compile=True)
+        nuts_kernel = NUTS(model, target_accept_prob=0.15, adapt_step_size=True, jit_compile=True)
         mcmc = MCMC(nuts_kernel, num_samples=sample_count, warmup_steps=burn_in_count)
+        mcmc.run(torch.tensor(truescatter))
+        posterior_samples = mcmc.get_samples()
+        print(mcmc.summary())
+    elif kernel == "hmc":
+        hmc_kernel = HMC(model, target_accept_prob=0.15, adapt_step_size=True, jit_compile=True)
+        mcmc = MCMC(hmc_kernel, num_samples=sample_count, warmup_steps=burn_in_count)
         mcmc.run(torch.tensor(truescatter))
         posterior_samples = mcmc.get_samples()
         print(mcmc.summary())
