@@ -118,7 +118,9 @@ truescatter = comp / factor
 import pyro
 import pyro.distributions as dist
 from scipy.stats import norm as normal
-    
+import math
+from numbers import Number, Real
+from scipy import special
 
 # Define the model
 def model(training_data):
@@ -129,10 +131,13 @@ def model(training_data):
     sigma  = pyro.sample("sigma", dist.Uniform(0.01, 5.0))
 
     # Ensure nonzero as could initially sample
-    if param1.equal(torch.tensor(0.0)) or param2.equal(torch.tensor(0.0)):
+    if param1.less_equal(torch.tensor(0.0)) or param2.less_equal(torch.tensor(0.0)):
+        return
+    
+    # Keep samples in range specified
+    if param1.greater(torch.tensor(0.21884 - 3*(343/14_000))) or param2.greater(torch.tensor(0.4)):
         return
 
-    # Ensure physically valid
     def surfaceFunction(x):
         return param1.item()*np.cos((2*np.pi/param2.item())*x + param3.item())
 
@@ -140,6 +145,7 @@ def model(training_data):
     scatter = KA_Object.Scatter(absolute=True,norm=False)
     scatter = np.array([scatter]).flatten()/factor
 
+    # Ensure physically valid (meets kirchoff criteria)
     if not KA_Object.surfaceChecker(True):
         return
     
@@ -160,26 +166,34 @@ from pyro.infer import MCMC, NUTS, RandomWalkKernel
 sample_count = 200_000
 burn_in_count = 10_000
 run_model = True
+kernel = "nuts"
 posterior_samples = np.array([])
 
 if (run_model):
     print("Running MCMC model")
-    rw_kernel = RandomWalkKernel(model, init_step_size=0.05, target_accept_prob=0.15)
-    mcmc = MCMC(rw_kernel, num_samples=sample_count, warmup_steps=burn_in_count)
-    mcmc.run(torch.tensor(truescatter))
-    posterior_samples = mcmc.get_samples()
+    if kernel == "rw":
+        rw_kernel = RandomWalkKernel(model, init_step_size=0.01, target_accept_prob=0.15)
+        mcmc = MCMC(rw_kernel, num_samples=sample_count, warmup_steps=burn_in_count)
+        mcmc.run(torch.tensor(truescatter))
+        posterior_samples = mcmc.get_samples()
+        print(mcmc.summary())
+    elif kernel == "nuts":
+        nuts_kernel = NUTS(model, target_accept_prob=0.15, step_size=0.01, adapt_step_size=True, jit_compile=True)
+        mcmc = MCMC(nuts_kernel, num_samples=sample_count, warmup_steps=burn_in_count)
+        mcmc.run(torch.tensor(truescatter))
+        posterior_samples = mcmc.get_samples()
+        print(mcmc.summary())
 
     posterior_amps = posterior_samples['amp'].detach().numpy()
     posterior_wls  = posterior_samples['wl'].detach().numpy()
     posterior_phase= posterior_samples['phase'].detach().numpy()
     posterior_samples = np.array(list(zip(posterior_amps,posterior_wls,posterior_phase)))
-    print(mcmc.summary())
 
     # Serialize/Deserialize
-    np.savetxt("posterior_samples.csv", posterior_samples, delimiter=",")
+    np.savetxt(kernel + ".csv", posterior_samples, delimiter=",")
     print("MCMC Results saved!")
 
-posterior_samples = np.loadtxt("posterior_samples.csv", delimiter=",")
+posterior_samples = np.loadtxt(kernel + ".csv", delimiter=",")
 
 print_sample_check = False
 if (print_sample_check):
@@ -235,14 +249,14 @@ b = np.random.choice(range(0,sample_count),400)
 plt.figure(figsize = (16,9))
 plt.grid()
 plt.fill_between(xsp,mins,maxx,color='grey',alpha=0.5,label='68% Credible interval')
-plt.plot(xsp,mean,label='Surface formed from the mean of the model parameter')
+plt.plot(xsp,mean,label='Surface formed from the mean of the' + kernel + 'model parameter')
 plt.plot(xsp,true,label='True surface')
-plt.plot(xsp,mean_surf, label='Surface formed from the mean of the generated model functions')
+plt.plot(xsp,mean_surf, label='Surface formed from the mean of the generated ' + kernel + ' model functions')
 plt.legend(loc='upper right')
 
 plt.xlabel("x [m]")
 plt.ylabel("Surface elevation")
-plt.savefig("reconstructedsurface.png")
+plt.savefig(kernel + ".png")
 
 # Plot traces
 #a.plot_traces()
@@ -258,5 +272,5 @@ for i in range(1000):
     plt.plot(generate_microphone_pressure(lol),'k',alpha=0.01)
 plt.xlabel("Microphone index")
 plt.ylabel("Response")
-plt.savefig("tracesagainsttruepressureabs.png")
+plt.savefig(kernel + " traces.png")
 plt.show()
