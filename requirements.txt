@@ -1,8 +1,9 @@
 arviz==0.20.0
 corner==2.2.3
 matplotlib==3.10.0
-numpy==2.2.2
-pyro_ppl==1.9.1
+numpy==1.23.5
+pymc3==3.11.4
+pyro==3.16
 scikit_learn==1.6.1
 scipy==1.15.1
 torch==2.5.1
