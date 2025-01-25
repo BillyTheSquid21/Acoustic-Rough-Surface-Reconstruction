@@ -4,16 +4,24 @@ import matplotlib.pyplot as plt
 import arviz as az
 import pytensor.tensor as pt
 import pickle
-from Directed2DVectorized import Directed2DVectorised
-from Directed2DVectorized import Directed2DVectorisedSymbolic
+
+from src.Directed2DVectorized import Directed2DVectorised
+from src.Directed2DVectorized import Directed2DVectorisedSymbolic
+from src.AcousticParameterMCMC import AcousticParameterMCMC
 
 def modelRun():
+
+    # Surface function
+    def SurfaceFunction(x, params):
+        # Add a tiny offset to wavelength as otherwise could div by 0!
+        return params[0]*np.cos((2*np.pi/(params[1]+1e-10))*(x + params[2]))
+
     # True params
     p = [0.0015,0.05,0.00]
 
     # True surface
     def trueF(x):
-        return p[0]*np.cos((2*np.pi/p[1])*x + p[2])
+        return SurfaceFunction(x, p)
 
     # Microphone array
     SourceLocation = [-0.20049999999999987,0.21884]
@@ -71,20 +79,37 @@ def modelRun():
         0.03456355, 0.02224533, 0.03089714, 0.02583821, 0.03186504, 0.02806474,
         0.05334908, 0.03035023, 0.0342647,  0.0377431,  0.03844866, 0.03600139,
         0.02590109, 0.01360588, 0.00829887, 0.00865361]
+    
+    truescatter = comp
 
-    # Flat scatter
+    np.random.seed(42)
 
-    #Flat plate
-    def zero(x):
-        return 0*x
+    from pytensor.printing import Print
+    import arviz as az
 
-    flat = Directed2DVectorised(SourceLocation,RecLoc,zero,14_000,0.02,np.pi/3,'simp',userMinMax= [-5,5] ,userSamples = 7000,absolute=False)
-    flatscatter = flat.Scatter(absolute=True,norm=False)
-    factor=flatscatter.max().copy()
+    # True function over linspace
+    xsp = np.linspace(ReceiverLocationsX[0],ReceiverLocationsX[-1], 500)
+    true = trueF(xsp)
 
-    truescatter = comp / factor
+    sample_count = 100_000
+    burn_in_count = 25_000
+    run_model = True
+    kernel = "metropolis-hastings"
+    #kernel = "NUTS"
+    userSamples = 700
+    posterior_samples = []
+    if run_model:
+        mcmc = AcousticParameterMCMC(len(p), sourceLocation=SourceLocation, receiverLocations=RecLoc, truescatter=truescatter, userSampleDensity=userSamples, sourceFrequency=14_000)
+        mcmc.run(kernel=kernel, surfaceFunction=SurfaceFunction, burnInCount=burn_in_count, sampleCount=sample_count, scaleTrueScatter=True)
+        mcmc.plotTrace()
 
-    def generate_microphone_pressure(parameters,standard=False,sigma=0,factore=True,uSamples=700):
+    posterior_samples = np.loadtxt(kernel + ".csv", delimiter=",")
+
+    #Scale true scatter here to compare to parameters
+    factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, RecLoc, 14_000, 700)
+    truescatter = truescatter / factor
+
+    def generate_microphone_pressure(parameters,standard=False,sigma=0,factore=True,uSamples=userSamples):
         '''
         Function that takes parameters of the surface and returns scattered
         acoustical pressure. Note that the source location, receiver array,
@@ -92,8 +117,7 @@ def modelRun():
         need to be took out for generalisation.
         '''
         def newFunction(x):
-            return parameters[0]*np.cos((2*np.pi/parameters[1])*x +
-                                        (2*np.pi/parameters[1])*parameters[2])
+            return SurfaceFunction(x, parameters)
 
         KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,14_000,0.02,np.pi/3,'simp',userSamples=uSamples,absolute=False)
         scatter = KA_Object.Scatter(absolute=True,norm=False)
@@ -105,121 +129,20 @@ def modelRun():
         else:
            return np.array([scatter]).flatten()
 
-    np.random.seed(42)
-
-    from pytensor.printing import Print
-
-    with pm.Model() as model:
-        # Priors for the three parameters
-        param1 = pm.HalfNormal('amp', sigma=0.01)
-        param2 = pm.HalfNormal('wl', sigma=0.08)
-        param3 = pm.HalfNormal('phase', sigma=0.01)
-        sigma = pm.Uniform('sigma', 0.01, 5.0)
-
-        # Surface function with evaluated parameters (if you need it before sampling)
-        def surfaceFunction(x):
-            return param1 * np.cos((2 * np.pi / param2) * x + param3)
-
-        # Check for physical validity and sample
-        p1_constraint1 = param1 > 0
-        potential = pm.Potential("p1_c1", pm.math.log(pm.math.switch(p1_constraint1, 1, 1e-10)))
-
-        p2_constraint1 = param2 > 0
-        potential = pm.Potential("p2_c1", pm.math.log(pm.math.switch(p2_constraint1, 1, 1e-10)))
-
-        p1_constraint2 = param1 > (0.21884 - 3 * (343 / 14000))
-        potential = pm.Potential("p1_c2", pm.math.log(pm.math.switch(p1_constraint2, 1, 1e-10)))
-
-        p2_constraint2 = param2 > 0.4
-        potential = pm.Potential("p2_c2", pm.math.log(pm.math.switch(p2_constraint2, 1, 1e-10)))
-
-        # Add check for your surface function's validity
-        KA_Object = Directed2DVectorisedSymbolic(
-            SourceLocation,
-            RecLoc,
-            surfaceFunction,
-            14000,
-            0.02,
-            np.pi / 3,
-            'simp',
-            userSamples=14000,
-            absolute=False
-        )
-        scatter = KA_Object.Scatter(absolute=True, norm=False)
-        scatter = scatter / factor
-
-        surface_check = KA_Object.surfaceChecker(True)
-
-        # Likelihood: Compare predicted response to observed data
-        likelihood = pm.Normal('obs', mu=scatter, sigma=sigma, observed=truescatter)
-
-    # True function over linspace
-    xsp = np.linspace(ReceiverLocationsX[0],ReceiverLocationsX[-1], 500)
-    true = trueF(xsp)
-
-    sample_count = 100_000
-    burn_in_count = 10_000
-    run_model = True
-    trace = []
-    kernel = "NUTS"
-    posterior_samples = []
-    if run_model == True:
-
-        if kernel == "metropolis-hastings":
-            with model:
-                # Define the Metropolis sampler
-                step = pm.Metropolis(tune_interval=5, scale=0.01)
-
-            with model:
-                # Sample from the posterior
-                trace = pm.sample(tune=burn_in_count, draws=sample_count, step=step, chains=4, return_inferencedata=True)
-        elif kernel == "NUTS":
-            with model:
-                # Define the Metropolis sampler
-                step = pm.NUTS(target_accept=0.15, step_scale=0.01)
-
-            with model:
-                # Sample from the posterior
-                trace = pm.sample(tune=burn_in_count, draws=sample_count, step=step, chains=4, return_inferencedata=True)
-
-        print(az.summary(trace))
-
-        # Trace plot
-        az.plot_trace(trace)
-
-        # Flatten arrays
-        posterior = trace.posterior
-        posterior_amps = posterior['amp'].values.flatten()
-        posterior_wls = posterior['wl'].values.flatten()
-        posterior_phase = posterior['phase'].values.flatten()
-
-        # Combine into a 2D array (rows = samples, columns = variables)
-        posterior_samples = np.column_stack((posterior_amps, posterior_wls, posterior_phase))
-
-        # Save as CSV
-        np.savetxt(kernel + ".csv", posterior_samples, delimiter=",")
-        print("MCMC Results saved!")
-
-    posterior_samples = np.loadtxt(kernel + ".csv", delimiter=",")
-
-    def surfaceFunction(x, p):
-        return p[0]*np.cos((2*np.pi/p[1])*x + p[2])
-
     # Creates a surface from each parameter set
     print("Creating posterior sample surfaces")
     surfs = []
     for _ in posterior_samples:
         hmm2 =  _.copy()
-        surfs.append(surfaceFunction(xsp,hmm2))
+        surfs.append(SurfaceFunction(xsp,hmm2))
 
     print("Creating mean of parameters surface")
-    mean = surfaceFunction(xsp,np.mean(posterior_samples,axis=0))
+    mean = SurfaceFunction(xsp,np.mean(posterior_samples,axis=0))
 
     print("Creating mean of all surfaces")
     mean_surf = np.mean(surfs, axis=0)
 
     print("Plotting confidence interval")
-    import arviz as az
     mins = []
     maxx = []
     for _ in range(500):
@@ -269,19 +192,19 @@ def modelRun():
 
         param = posterior_samples[i]
 
-        def surfaceFunction(x):
-            return param[0] * np.cos((2 * np.pi / param[1]) * x + param[2])
+        def newFunction(x):
+            return SurfaceFunction(x, param)
         
         # Add check for your surface function's validity
         KA_Object = Directed2DVectorised(
             SourceLocation,
             RecLoc,
-            surfaceFunction,
+            newFunction,
             14000,
             0.02,
             np.pi / 3,
             'simp',
-            userSamples=14000,
+            userSamples=userSamples,
            absolute=False
         )
         scatter = KA_Object.Scatter(absolute=True, norm=False)
