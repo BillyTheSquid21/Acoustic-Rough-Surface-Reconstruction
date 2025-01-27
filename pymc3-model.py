@@ -99,7 +99,7 @@ def modelRun():
     userSamples = 700
     posterior_samples = []
     if run_model:
-        mcmc = AcousticParameterMCMC(len(p), sourceLocation=SourceLocation, receiverLocations=RecLoc, truescatter=truescatter, userSampleDensity=userSamples, sourceFrequency=14_000)
+        mcmc = AcousticParameterMCMC(cosineCount=len(p), sourceLocation=SourceLocation, receiverLocations=RecLoc, truescatter=truescatter, userSampleDensity=userSamples, sourceFrequency=14_000)
         mcmc.run(kernel=kernel, surfaceFunction=SurfaceFunction, burnInCount=burn_in_count, sampleCount=sample_count, scaleTrueScatter=True)
         mcmc.plotTrace()
 
@@ -108,26 +108,6 @@ def modelRun():
     #Scale true scatter here to compare to parameters
     factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, RecLoc, 14_000, 700)
     truescatter = truescatter / factor
-
-    def generate_microphone_pressure(parameters,standard=False,sigma=0,factore=True,uSamples=userSamples):
-        '''
-        Function that takes parameters of the surface and returns scattered
-        acoustical pressure. Note that the source location, receiver array,
-        frequency, angle, etc. is all handled inside the function. This will
-        need to be took out for generalisation.
-        '''
-        def newFunction(x):
-            return SurfaceFunction(x, parameters)
-
-        KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,14_000,0.02,np.pi/3,'simp',userSamples=uSamples,absolute=False)
-        scatter = KA_Object.Scatter(absolute=True,norm=False)
-
-        if standard:
-            return (np.array([scatter]).flatten() - np.mean(np.array([scatter]).flatten())) / np.std(np.array([scatter]).flatten())
-        elif factore:
-            return np.array([scatter]).flatten()/factor
-        else:
-           return np.array([scatter]).flatten()
 
     # Creates a surface from each parameter set
     print("Creating posterior sample surfaces")
@@ -166,9 +146,14 @@ def modelRun():
     plt.ylabel("Surface elevation")
     plt.savefig(kernel + ".png")
 
-    # Plot traces
-    #a.plot_traces()
+    def generate_microphone_pressure(parameters,uSamples=userSamples):
+        def newFunction(x):
+            return SurfaceFunction(x, parameters)
 
+        KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,14_000,0.02,np.pi/3,'simp',userMinMax=[-1,1],userSamples=uSamples,absolute=False)
+        scatter = KA_Object.Scatter(absolute=True,norm=False)
+        return scatter/factor   
+    
     b = np.random.choice(range(0,sample_count),3000)
 
     plt.figure(figsize=(16,9))
@@ -177,10 +162,12 @@ def modelRun():
 
     for i in range(1000):
         lol = posterior_samples[b[i]].copy()
-        plt.plot(generate_microphone_pressure(lol),'k',alpha=0.01)
+        plt.plot(generate_microphone_pressure([lol[0]/10.0,lol[1],lol[2]]),'k',alpha=0.01)
     plt.xlabel("Microphone index")
     plt.ylabel("Response")
     plt.savefig(kernel + " traces.png")
+    plt.show()
+
     plt.show()
 
     # Create the response array

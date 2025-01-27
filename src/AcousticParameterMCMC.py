@@ -71,12 +71,16 @@ class AcousticParameterMCMC:
 
         factorizedScatter = self.trueScatter/factor
 
+        # Calculate the measurement error
+        # The error between the receivers is considered independent so this is diagonal
+        #error = np.eye(len(factorizedScatter))*np.mean(factorizedScatter)
+
         with pm.Model() as model:
             # Priors for the three parameters only
-            param1 = pm.HalfNormal('amp', sigma=0.01)  #Amplitude sampling
-            param2 = pm.HalfNormal('wl', sigma=0.08)   #Wavelength sampling
-            param3 = pm.HalfNormal('phase', sigma=0.01)#Phase sampling as normal prior
-            sigma  = pm.HalfNormal('sigma', sigma=0.5) #Noise term sampling
+            param1 = pm.HalfNormal('amp', sigma=0.01)      #Amplitude sampling
+            param2 = pm.HalfNormal('wl', sigma=0.08)       #Wavelength sampling
+            param3 = pm.Normal('phase', sigma=0.01)        #Phase sampling as normal prior
+            #epsilon= pm.HalfNormal('epsilon', sigma=0.075) #Scales the error covariance matrix
 
             # Surface function with evaluated parameters (if you need it before sampling)
             def newFunction(x):
@@ -89,7 +93,7 @@ class AcousticParameterMCMC:
             p2_constraint2 = param2 <= 0.4
             potential = pm.Potential("p2_c2", pm.math.log(pm.math.switch(p2_constraint2, 1, 1e-6)))
 
-            p3_constraint1 = 2*np.pi*param3 / param2 <= 2*np.pi #Ensures absolute phase stays within the [0,2*pi] range
+            p3_constraint1 = np.abs(2*np.pi*param3 / param2) <= np.pi #Ensures absolute phase stays within the [-pi,pi] range
             potential = pm.Potential("p3_c1", pm.math.log(pm.math.switch(p3_constraint1, 1, 1e-6)))
 
             #Scatter operation which maintains symbolic links
@@ -101,7 +105,7 @@ class AcousticParameterMCMC:
                 0.02,
                 np.pi / 3,
                 'simp',
-                userMinMax=[-1,1],
+                userMinMax=[-1,1], #TODO: figure out why amplitude is overestimated
                 userSamples=self.userSampleDensity,
                 absolute=False
             )
@@ -110,7 +114,7 @@ class AcousticParameterMCMC:
             #KA_Object.surfaceChecker(True) #Adds penalty if kirchoff criteria not met
 
             # Likelihood: Compare predicted response to observed data
-            likelihood = pm.Normal('obs', mu=scatter, sigma=sigma, observed=factorizedScatter)
+            likelihood = pm.MvNormal('obs', mu=scatter, cov=np.eye(len(factorizedScatter))*0.075, observed=factorizedScatter)
 
         trace = []
         posterior_samples = []
