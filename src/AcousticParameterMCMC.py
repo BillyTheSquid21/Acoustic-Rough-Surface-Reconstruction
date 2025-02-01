@@ -70,6 +70,7 @@ class AcousticParameterMCMC:
             factor = AcousticParameterMCMC.GenerateFactor(self.sourceLocation, self.receiverLocations, self.sourceFrequency, self.userSampleDensity)
 
         factorizedScatter = self.trueScatter/factor
+        factorizedScatter = factorizedScatter
 
         # Calculate the measurement error
         # The error between the receivers is considered independent so this is diagonal
@@ -77,24 +78,24 @@ class AcousticParameterMCMC:
 
         with pm.Model() as model:
             # Priors for the three parameters only
-            param1 = pm.HalfNormal('amp', sigma=0.01)      #Amplitude sampling
-            param2 = pm.HalfNormal('wl', sigma=0.08)       #Wavelength sampling
-            param3 = pm.Normal('phase', sigma=0.01)        #Phase sampling as normal prior
-            #epsilon= pm.HalfNormal('epsilon', sigma=0.075) #Scales the error covariance matrix
+            param1 = pm.HalfNormal('amp', sigma=0.001)       #Amplitude sampling (half normal for now)
+            param2 = pm.HalfNormal('wl', sigma=0.08)         #Wavelength sampling
+            param3 = pm.Normal('phase', mu=0.0, sigma=0.01)  #Phase sampling as normal prior
+            epsilon= pm.Normal('epsilon', mu=0.1, sigma=0.1) #Scales the error covariance matrix (best results at mean = ~0.25)
 
             # Surface function with evaluated parameters (if you need it before sampling)
             def newFunction(x):
                 return surfaceFunction(x, (param1,param2,param3))
 
             # Check for physical validity and sample
+            #p1_constraint1 = param1 > 0.0
+            #potential = pm.Potential("p1_c1", pm.math.log(pm.math.switch(p1_constraint1, 1, 1e-6)))
+
             p1_constraint2 = param1 <= (0.21884 - 3 * (343 / self.sourceFrequency))
             potential = pm.Potential("p1_c2", pm.math.log(pm.math.switch(p1_constraint2, 1, 1e-6)))
 
             p2_constraint2 = param2 <= 0.4
             potential = pm.Potential("p2_c2", pm.math.log(pm.math.switch(p2_constraint2, 1, 1e-6)))
-
-            p3_constraint1 = np.abs(2*np.pi*param3 / param2) <= np.pi #Ensures absolute phase stays within the [-pi,pi] range
-            potential = pm.Potential("p3_c1", pm.math.log(pm.math.switch(p3_constraint1, 1, 1e-6)))
 
             #Scatter operation which maintains symbolic links
             KA_Object = Directed2DVectorisedSymbolic(
@@ -104,17 +105,16 @@ class AcousticParameterMCMC:
                 self.sourceFrequency,
                 0.02,
                 np.pi / 3,
-                'simp',
-                userMinMax=[-1,1], #TODO: figure out why amplitude is overestimated
+                userMinMax=[-1,1],
                 userSamples=self.userSampleDensity,
                 absolute=False
             )
             scatter = KA_Object.Scatter(absolute=True, norm=False)
             scatter = scatter / factor
-            #KA_Object.surfaceChecker(True) #Adds penalty if kirchoff criteria not met
+            KA_Object.surfaceChecker(True) #Adds penalty if kirchoff criteria not met
 
             # Likelihood: Compare predicted response to observed data
-            likelihood = pm.MvNormal('obs', mu=scatter, cov=np.eye(len(factorizedScatter))*0.075, observed=factorizedScatter)
+            likelihood = pm.MvNormal('obs', mu=scatter, cov=np.eye(len(factorizedScatter))*0.075*epsilon, observed=factorizedScatter)
 
         trace = []
         posterior_samples = []
@@ -129,11 +129,13 @@ class AcousticParameterMCMC:
         elif kernel == "NUTS":
             with model:
                 # Define the NUTS sampler
-                step = pm.NUTS(target_accept=0.9)
+                step = pm.NUTS(target_accept=0.95)
 
             with model:
                 # Sample from the posterior
                 trace = pm.sample(tune=burnInCount, draws=sampleCount, step=step, chains=chainCount, return_inferencedata=True)
+        else:
+            raise Exception("Unrecognised kernel name!")
 
         # Flatten arrays
         posterior = trace.posterior

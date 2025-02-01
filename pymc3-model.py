@@ -2,6 +2,7 @@ import pymc as pm
 import numpy as np
 import matplotlib.pyplot as plt
 import arviz as az
+import pytensor
 import pytensor.tensor as pt
 import pickle
 
@@ -13,8 +14,9 @@ def modelRun():
 
     # Surface function
     def SurfaceFunction(x, params):
+        # Is equal to Amp*Cos(2*pi*(x/WL + phase))
         # Add a tiny offset to wavelength as otherwise could div by 0!
-        return params[0]*np.cos((2*np.pi/(params[1]+1e-10))*(x + params[2]))
+        return params[0]*np.cos((2*np.pi*((x/(params[1]+1e-10)) + params[2])))
 
     # True params
     p = [0.0015,0.05,0.00]
@@ -91,11 +93,14 @@ def modelRun():
     xsp = np.linspace(ReceiverLocationsX[0],ReceiverLocationsX[-1], 500)
     true = trueF(xsp)
 
-    sample_count = 100_000
-    burn_in_count = 25_000
-    run_model = True
-    kernel = "metropolis-hastings"
-    #kernel = "NUTS"
+    #PT Device
+    print("Currently using: ", pytensor.config.device)
+
+    sample_count = 5_000
+    burn_in_count = 5_000
+    run_model = False
+    #kernel = "metropolis-hastings"
+    kernel = "NUTS"
     userSamples = 700
     posterior_samples = []
     if run_model:
@@ -137,7 +142,7 @@ def modelRun():
     plt.figure(figsize = (16,9))
     plt.grid()
     plt.fill_between(xsp,mins,maxx,color='grey',alpha=0.5,label='68% Credible interval')
-    plt.plot(xsp,mean,label='Surface formed from the mean of the' + kernel + 'model parameter')
+    plt.plot(xsp,mean,label='Surface formed from the mean of the ' + kernel + ' model parameter')
     plt.plot(xsp,true,label='True surface')
     plt.plot(xsp,mean_surf, label='Surface formed from the mean of the generated ' + kernel + ' model functions')
     plt.legend(loc='upper right')
@@ -154,7 +159,7 @@ def modelRun():
         scatter = KA_Object.Scatter(absolute=True,norm=False)
         return scatter/factor   
     
-    b = np.random.choice(range(0,sample_count),3000)
+    b = np.random.choice(range(0,sample_count),1000)
 
     plt.figure(figsize=(16,9))
     plt.grid()
@@ -167,6 +172,11 @@ def modelRun():
     plt.ylabel("Response")
     plt.savefig(kernel + " traces.png")
     plt.show()
+
+    import corner
+    corner.corner(np.array(posterior_samples),bins=200,
+              quantiles=[0.16, 0.5, 0.84],labels=[r"$\zeta_1$", r"$\zeta_2$", r"$\zeta_3$"],
+              show_titles=True, title_fmt = ".4f")
 
     plt.show()
 

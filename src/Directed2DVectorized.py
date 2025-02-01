@@ -2,14 +2,14 @@ from scipy.integrate import quad
 from sklearn.metrics import mean_squared_error
 import numpy as np
 import scipy as sp
-import matplotlib.pyplot as plt
-from matplotlib import cm
 from mpl_toolkits.mplot3d.axes3d import get_test_data
-from mpl_toolkits.mplot3d import Axes3D
 from numpy import matlib as mb
 import corner as corner
-import csv
-import time
+import pytensor.tensor as pt
+import pymc as pm
+
+from src.SymbolicMath import SymGradient, SymIntegral
+from src.SignalAnalysis import *
 
 class Directed2DVectorised:
     def __init__(self,sourceLocation,receiverLocations,surfaceFunction,frequency,a,sourceAngle = -np.pi/4,method = 'trapz',userMinMax = None,userSamples = 9000,absolute = True):
@@ -81,7 +81,6 @@ class Directed2DVectorised:
 
 
     def surfaceChecker(self, relaxed = True, hyper_accurate = False):
-
         '''
         Check if the surface satisfies the Kirchhoff criteria.
         Inputs:
@@ -117,30 +116,7 @@ class Directed2DVectorised:
 
         return self.checker
 
-
-
-    def __CalculateAngle(self):
-        ac = []
-        ab = []
-        for i in range(len(self.sourceLocationX[0])):
-            ac.append([1,0])
-            tempFrac = 1/np.sqrt(((self.x[0][i]-self.sourceLocationX[0][i])**2+
-                           (self.surfaceVals[0][i]-self.sourceLocationY[0][i])**2))
-            ab.append([tempFrac*(self.x[0][i]-self.sourceLocationX[0][i]),
-                       tempFrac*(self.surfaceVals[0][i] -
-                                 self.sourceLocationY[0][i])])
-        s = np.array(ac)
-        r = np.array(ab)
-        SdotR = np.einsum('ij,ij->i',s,r)
-        modSmodR = np.linalg.norm(r,axis=1)*np.linalg.norm(s,axis=1)
-        temp = np.abs(np.arccos(SdotR/modSmodR) - (-self.sourceAngle + np.pi/2))
-        output = mb.repmat(temp,self.number,1)
-        return output
-
-
-
     def __Integrand(self):
-
         r =  - self.x + self.sourceLocationX
         r2 =  - self.x + self.receiverLocationsX
         l = self.sourceLocationY - self.surfaceVals
@@ -218,128 +194,8 @@ class Directed2DVectorised:
             else:
                 return p
 
-
-def fourierRes(signal, timeIncrement,axis = 0):
-    '''Just give us the fourier transform of a signal'''
-    import scipy as sp
-    sampleFrequency = 1/timeIncrement
-    n = signal.shape[0]
-    yf = np.fft.fft(signal,axis=axis)
-    #xf = sp.fft.fftshift(sp.fft.fftfreq(n,timeIncrement))
-    xf = np.fft.fftfreq(n,timeIncrement)
-    return np.fft.fftshift(xf),np.fft.fftshift(yf)
-
-
-def spatialRes(signal):
-    '''Merely a FFT.'''
-    y = sp.fft.fft(signal,axis=0)
-    return y
-
-
-def Doppler(signals,dt,axis = 0,real=True):
-    '''Takes signals of shape (number of signals, number of samples, number of receivers ).
-    Returns the Doppler spectrum of all the receivers.'''
-    n = np.array(signals[0]).size
-    fSig = []
-
-    for s in signals:
-        x,Fsignals = fourierRes(np.array(s),dt,axis=axis)
-        fSig.append(Fsignals)
-    freq = x
-    if real:
-        return freq,1/n*np.mean(np.abs(np.array(fSig))**2,axis=0)
-    else:
-        return freq,1/n*np.mean(np.real(np.array(fSig)),axis=0),1/n*np.mean(np.imag(np.array(fSig)),axis=0)
-
-import numpy.matlib
-def fourier_coefs(signal, x):
-    '''Return the Fourier transform from a signal.'''
-    dx = x[1] - x[0] #Dx
-    N = len(x)
-    freqs = np.fft.fftfreq(N, dx)[:N//2]
-    fft = (np.fft.fft(signal)/N)[:N//2]
-    return freqs, fft
-
-def decompose(freqs, fft, ranges, x):
-    '''Decompose a Fourier transform and the frequencies into coefficients. Returns
-       the full decomposed surface, the coefficients, and the frequency.'''
-    c = fft[0]
-    a_s = -2*np.real(fft[1:ranges])
-    b_s = -2*np.imag(fft[1:ranges])
-    f_comp = 2*np.pi*freqs[1:ranges]
-    temp_a = np.reshape(a_s,(-1,1)) + np.zeros((ranges-1,len(x)))
-    temp_b = np.reshape(b_s,(-1,1)) + np.zeros((ranges-1,len(x)))
-    temp_f = np.reshape(f_comp,(-1,1)) + np.zeros((ranges-1,len(x)))
-    summies = (temp_a * np.cos((temp_f * x)) + temp_b * np.sin((temp_f * x)))
-    summation = np.sum(summies, axis = 0)
-    summation = summation + c
-    return np.real(summation), a_s, b_s,f_comp
-
-def extract_components(a_coef, b_coef, freqs):
-    '''Extract the fouerier components that aren't extremely small. '''
-    surface_parameters = []
-    for i in range(len(a_coef)):
-        if a_coef[i] > 0.000001 or b_coef[i] > 0.000001:
-            surface_parameters.append([a_coef[i], b_coef[i], freqs[i]])
-    return surface_parameters
-
-import pytensor.tensor as pt
-from pytensor import grad
-from pytensor.printing import Print
-import pymc as pm
-
-def symbolicGrad(y, x):
-    # Compute dx (assume uniform spacing)
-    dx = x[1] - x[0]  # Symbolic spacing
-
-    # Forward difference for the first point
-    dy_start = (y[1] - y[0]) / dx
-
-    # Central differences for inner points
-    dy_inner = (y[2:] - y[:-2]) / (2 * dx)
-
-    # Backward difference for the last point
-    dy_end = (y[-1] - y[-2]) / dx
-
-    # Combine into a single array
-    dy_full = pt.concatenate([[dy_start], dy_inner, [dy_end]])
-
-    return dy_full
-
-def integrate_simpson_pymc(F, x, axis=-1):
-    """
-    Computes the integral of symbolic PyMC variables using Simpson's rule
-    along a specified axis. Assumes F and x have the same dimensions.
-
-    Parameters:
-    - F (pytensor.tensor): A symbolic array of function values to integrate.
-    - x (pytensor.tensor): A symbolic array of x-coordinates corresponding to F.
-    - axis (int): The axis along which to integrate. Default is -1 (last axis).
-
-    Returns:
-    - result (pytensor.tensor): A symbolic tensor representing the integral along the specified axis.
-    """
-    F = pt.moveaxis(F, axis, -1)
-    x = pt.moveaxis(x, axis, -1)
-
-    n = F.shape[-1]
-    h = x[..., 1] - x[..., 0]  # Uniform spacing assumption
-
-    odd_sum = pt.sum(F[..., 1:-1:2], axis=-1)
-    even_sum = pt.sum(F[..., 2:-2:2], axis=-1)
-
-    # Simpson's rule
-    result = h / 3 * (F[..., 0] + 4 * odd_sum + 2 * even_sum + F[..., -1])    
-    return result
-
-def symbolic_bessel_approx(x, n=1):
-    # Simple approximation for small x (first few terms of Taylor series)
-    # Jn(x) ≈ (x/2)^n / (n!) for small x
-    term = pt.power(x / 2, n) / pt.gamma(n)
-    return term
-
 class Directed2DVectorisedSymbolic:
-    def __init__(self,sourceLocation,receiverLocations,surfaceFunction,frequency,a,sourceAngle = -np.pi/4,method = 'trapz',userMinMax = None,userSamples = 9000,absolute = True):
+    def __init__(self,sourceLocation,receiverLocations,surfaceFunction,frequency,a,sourceAngle=-np.pi/4,userMinMax=None,userSamples=9000,absolute=True):
 
         '''
         Init function for the Kirchhoff approximation using a radiation from a baffled piston source.
@@ -364,7 +220,6 @@ class Directed2DVectorisedSymbolic:
         self.a = a
         self.sourceAngle = sourceAngle
         self.surfaceFunction = surfaceFunction
-        self.method = method
         self.absolute = absolute
         if userMinMax == None:
             self.min = self.receiverLocationsX.min()
@@ -381,8 +236,8 @@ class Directed2DVectorisedSymbolic:
 
         self.x = np.linspace(self.min,self.max,self.samples).reshape(1,-1) + np.zeros((self.number,self.samples)) #see if this can be changed
         self.surfaceVals = surfaceFunction(self.x)
-        self.derivativeVals = symbolicGrad(self.surfaceVals[0], self.x[0])
-        self.doubleDerivativeVals = symbolicGrad(self.derivativeVals, self.x[0])
+        self.derivativeVals = SymGradient(self.surfaceVals[0], self.x[0])
+        self.doubleDerivativeVals = SymGradient(self.derivativeVals, self.x[0])
 
         self.derivativeVals = self.derivativeVals.reshape((1, -1)) + pt.zeros((self.number, self.samples))
         self.doubleDerivativeVals = self.doubleDerivativeVals.reshape((1, -1)) + pt.zeros((self.number, self.samples))
@@ -392,7 +247,7 @@ class Directed2DVectorisedSymbolic:
             self.derivativeVals = self.derivativeVals + pt.zeros((self.number,self.samples))
 
 
-    def surfaceChecker(self, relaxed = True, hyper_accurate = False):
+    def surfaceChecker(self, relaxed=True, hyper_accurate=False):
 
         '''
         Check if the surface satisfies the Kirchhoff criteria.
@@ -401,7 +256,6 @@ class Directed2DVectorisedSymbolic:
         hyper_accuare - More accurate calculation for highly oscillatory functions, when there is no array defining surface
         elevation.
         '''
-
         if not hyper_accurate:
             #self.doubleDerivativeVals = sp.misc.derivative(self.surfaceFunction,self.x,n=2)
             numerator = 1 + (self.derivativeVals)**2
@@ -409,40 +263,20 @@ class Directed2DVectorisedSymbolic:
 
         else:
             #For highly oscillatory functions
-            x = np.linspace(self.min, self.max, 10*self.samples)
-            fun_val = self.surfaceFunction(x)
-            derivativeVals = np.gradient(fun_val, x[1] - x[0],edge_order=2, axis=None)
-            doublederivativeVals = np.gradient(derivativeVals, x[1] - x[0],edge_order=2, axis=None)
-            numerator = 1 + derivativeVals**2
-            denominator = doublederivativeVals
+            #TODO: When needed convert to symbolic
+            #x = np.linspace(self.min, self.max, 10*self.samples)
+            #fun_val = self.surfaceFunction(x)
+            #derivativeVals = np.gradient(fun_val, x[1] - x[0],edge_order=2, axis=None)
+            #doublederivativeVals = np.gradient(derivativeVals, x[1] - x[0],edge_order=2, axis=None)
+            #numerator = 1 + derivativeVals**2
+            #denominator = doublederivativeVals
+            pass
 
         self.curvature = (numerator**1.5)/np.abs((denominator))
         self.condition = 1/((self.k*self.curvature)**0.333333333)
 
         surf_constraint = self.condition.max() > 1
         potential = pm.Potential("surface_c", pm.math.log(pm.math.switch(surf_constraint, 1, 1e-10)))
-
-
-
-    def __CalculateAngle(self):
-        ac = []
-        ab = []
-        for i in range(len(self.sourceLocationX[0])):
-            ac.append([1,0])
-            tempFrac = 1/np.sqrt(((self.x[0][i]-self.sourceLocationX[0][i])**2+
-                           (self.surfaceVals[0][i]-self.sourceLocationY[0][i])**2))
-            ab.append([tempFrac*(self.x[0][i]-self.sourceLocationX[0][i]),
-                       tempFrac*(self.surfaceVals[0][i] -
-                                 self.sourceLocationY[0][i])])
-        s = np.array(ac)
-        r = np.array(ab)
-        SdotR = np.einsum('ij,ij->i',s,r)
-        modSmodR = np.linalg.norm(r,axis=1)*np.linalg.norm(s,axis=1)
-        temp = np.abs(np.arccos(SdotR/modSmodR) - (-self.sourceAngle + np.pi/2))
-        output = mb.repmat(temp,self.number,1)
-        return output
-
-
 
     def __Integrand(self):
 
@@ -458,7 +292,7 @@ class Directed2DVectorisedSymbolic:
 
         theta = np.arccos(l*1/R1) - (- self.sourceAngle + np.pi/2)
 
-        Directivity = (symbolic_bessel_approx(self.k*self.a*np.sin(theta)))/(self.k*self.a*np.sin(theta))
+        Directivity = (pt.math.j1(self.k*self.a*np.sin(theta)))/(self.k*self.a*np.sin(theta))
         Directivity_with_nan_handling = pt.switch(pt.isnan(Directivity), 0.5, Directivity)
 
         que = qz - self.derivativeVals*qx
@@ -472,17 +306,18 @@ class Directed2DVectorisedSymbolic:
     def Scatter(self,absolute=False,norm=True,direct_field=False):
         F  = self.__Integrand()
         p = pt.zeros(F[0].shape[0])
-        if self.method == 'simp':
-            integral_real = integrate_simpson_pymc(F[0], x=self.x)
-            integral_imag = integrate_simpson_pymc(F[1], x=self.x)
-            p_real = p + -1 / (2 * np.pi * self.k) * integral_real
-            p_imag = p + -1 / (2 * np.pi * self.k) * integral_imag
-            if norm == True:
-                p = pt.sqrt(p_real**2 + p_imag**2)/np.max(pt.sqrt(p_real**2 + p_imag**2))
-                return p
 
-            elif absolute == True:
-                p = pt.sqrt(p_real**2 + p_imag**2)
-                return p
-            else:
-                return p
+        #Just use simpson integral for now
+        integral_real = SymIntegral(F[0], x=self.x, axis=1)
+        integral_imag = SymIntegral(F[1], x=self.x, axis=1)
+        p_real = p + -1 / (2 * np.pi * self.k) * integral_real
+        p_imag = p + -1 / (2 * np.pi * self.k) * integral_imag
+        if norm == True:
+            p = pt.sqrt(p_real**2 + p_imag**2)/np.max(pt.sqrt(p_real**2 + p_imag**2))
+            return p
+
+        elif absolute == True:
+            p = pt.sqrt(p_real**2 + p_imag**2)
+            return p
+        else:
+            return p
