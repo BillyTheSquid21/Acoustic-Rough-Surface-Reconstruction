@@ -99,17 +99,17 @@ def modelRun():
     sample_count = 5_000
     burn_in_count = 10_000
     run_model = True
-    #kernel = "metropolis-hastings"
-    kernel = "NUTS"
+    kernel = "metropolis-hastings"
+    #kernel = "NUTS"
     userSamples = 700
     posterior_samples = []
     if run_model:
         mcmc = AcousticParameterMCMC(cosineCount=len(p), sourceLocation=SourceLocation, receiverLocations=RecLoc, truescatter=truescatter, userSampleDensity=userSamples, sourceFrequency=14_000)
         mcmc.run(kernel=kernel, surfaceFunction=SurfaceFunction, burnInCount=burn_in_count, sampleCount=sample_count, scaleTrueScatter=True)
         mcmc.plotTrace()
-        plt.savefig(kernel + " pymc trace.png")
+        plt.savefig("results/" + kernel.lower() + " pymc trace.png")
 
-    posterior_samples = np.loadtxt(kernel + ".csv", delimiter=",")
+    posterior_samples = np.loadtxt("results/" + kernel + ".csv", delimiter=",")
 
     #Scale true scatter here to compare to parameters
     factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, RecLoc, 14_000, 700)
@@ -150,7 +150,7 @@ def modelRun():
 
     plt.xlabel("x [m]")
     plt.ylabel("Surface elevation")
-    plt.savefig(kernel + ".png")
+    plt.savefig("results/" + kernel + ".png")
     
     b = np.random.choice(range(0,sample_count),1000)
 
@@ -171,14 +171,14 @@ def modelRun():
         plt.plot(generate_microphone_pressure([lol[0],lol[1],lol[2]]),'k',alpha=0.01)
     plt.xlabel("Microphone index")
     plt.ylabel("Response")
-    plt.savefig(kernel + " traces.png")
+    plt.savefig("results/" + kernel + " traces.png")
     plt.show()
 
     import corner
     corner.corner(np.array(posterior_samples),bins=200,
               quantiles=[0.16, 0.5, 0.84],labels=[r"$\zeta_1$", r"$\zeta_2$", r"$\zeta_3$"],
               show_titles=True, title_fmt = ".4f")
-    plt.savefig(kernel + " corner.png")
+    plt.savefig("results/" + kernel + " corner.png")
     plt.show()
 
     # Create the response array
