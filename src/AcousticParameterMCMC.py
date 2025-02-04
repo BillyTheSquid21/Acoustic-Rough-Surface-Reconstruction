@@ -77,28 +77,39 @@ class AcousticParameterMCMC:
         #error = np.eye(len(factorizedScatter))*np.mean(factorizedScatter)
 
         with pm.Model() as model:
+            # Model works by:
+            # 1. Sample each parameter from their respective prior
+            # 2. Apply a penalty if out of bounds
+            # 3. Simulates the scattering of the acoustic waves against a surface from the parameters
+            # 4. Scales the scattered signal by the factor from the flat plate response
+            # 5. Apply a penalty if fails the surface check
+            # 6. Calculates the likelihood with the multivariate normal betweem the simulated response and the observed response
+
             # Priors for the three parameters only
-            param1 = pm.LogNormal('amp', mu=-7.0, sigma=1.2) #Amplitude sampling                                                          
+            param1 = pm.LogNormal('amp', mu=-7.0, sigma=1.2) #Amplitude sampling                                                 
             param2 = pm.HalfNormal('wl', sigma=0.08)         #Wavelength sampling
-            param3 = pm.Normal('phase', mu=0.0, sigma=0.01)  #Phase sampling as normal prior
-            epsilon= 0.02                                    #Scales the error covariance matrix
-                                                             #Can do as it's own parameter as well, previously was pm.Normal('epsilon', mu=0.1, sigma = 0.1) * 0.075
+            param3 = pm.Normal('phase', mu=0.0, sigma=0.01)  #Phase sampling
+            epsilon= 0.02                                    #Scales the error covariance matrix for the error between receivers
 
             # Surface function with evaluated parameters (if you need it before sampling)
             def newFunction(x):
                 return surfaceFunction(x, (param1,param2,param3))
 
             # Check for physical validity and sample
-            #p1_constraint1 = param1 > 0.0
-            #potential = pm.Potential("p1_c1", pm.math.log(pm.math.switch(p1_constraint1, 1, 1e-6)))
+            p1_constraint1 = param1 > 0.0
+            potential = pm.Potential("p1_c1", pm.math.log(pm.math.switch(p1_constraint1, 1, 1e-6)))
 
-            #p1_constraint2 = param1 <= (0.21884 - 3 * (343 / self.sourceFrequency))
-            #potential = pm.Potential("p1_c2", pm.math.log(pm.math.switch(p1_constraint2, 1, 1e-6)))
+            p2_constraint1 = param2 > 0.0
+            potential = pm.Potential("p2_c1", pm.math.log(pm.math.switch(p2_constraint1, 1, 1e-6)))
 
-            #p2_constraint2 = param2 <= 0.4
-            #potential = pm.Potential("p2_c2", pm.math.log(pm.math.switch(p2_constraint2, 1, 1e-6)))
+            p1_constraint2 = param1 <= (0.21884 - 3 * (343 / self.sourceFrequency))
+            potential = pm.Potential("p1_c2", pm.math.log(pm.math.switch(p1_constraint2, 1, 1e-6)))
 
-            #Scatter operation which maintains symbolic links
+            p2_constraint2 = param2 <= 0.4
+            potential = pm.Potential("p2_c2", pm.math.log(pm.math.switch(p2_constraint2, 1, 1e-6)))
+
+            # Scatter operation which maintains symbolic links
+            # Gives the same results as Directed2DVectorized class
             KA_Object = Directed2DVectorisedSymbolic(
                 self.sourceLocation,
                 self.receiverLocations,
@@ -112,7 +123,7 @@ class AcousticParameterMCMC:
             )
             scatter = KA_Object.Scatter(absolute=True, norm=False)
             scatter = scatter / factor
-            #KA_Object.surfaceChecker(True) #Adds penalty if kirchoff criteria not met
+            KA_Object.surfaceChecker(True) #Adds pm.Potential penalty if kirchoff criteria not met
 
             # Likelihood: Compare predicted response to observed data
             likelihood = pm.MvNormal('obs', mu=scatter, cov=np.eye(len(factorizedScatter))*epsilon, observed=factorizedScatter)
