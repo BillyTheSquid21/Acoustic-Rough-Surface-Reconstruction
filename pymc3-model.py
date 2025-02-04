@@ -97,8 +97,8 @@ def modelRun():
     print("Currently using: ", pytensor.config.device)
 
     sample_count = 5_000
-    burn_in_count = 5_000
-    run_model = False
+    burn_in_count = 10_000
+    run_model = True
     #kernel = "metropolis-hastings"
     kernel = "NUTS"
     userSamples = 700
@@ -107,6 +107,7 @@ def modelRun():
         mcmc = AcousticParameterMCMC(cosineCount=len(p), sourceLocation=SourceLocation, receiverLocations=RecLoc, truescatter=truescatter, userSampleDensity=userSamples, sourceFrequency=14_000)
         mcmc.run(kernel=kernel, surfaceFunction=SurfaceFunction, burnInCount=burn_in_count, sampleCount=sample_count, scaleTrueScatter=True)
         mcmc.plotTrace()
+        plt.savefig(kernel + " pymc trace.png")
 
     posterior_samples = np.loadtxt(kernel + ".csv", delimiter=",")
 
@@ -150,6 +151,12 @@ def modelRun():
     plt.xlabel("x [m]")
     plt.ylabel("Surface elevation")
     plt.savefig(kernel + ".png")
+    
+    b = np.random.choice(range(0,sample_count),1000)
+
+    plt.figure(figsize=(16,9))
+    plt.grid()
+    plt.plot(truescatter)
 
     def generate_microphone_pressure(parameters,uSamples=userSamples):
         def newFunction(x):
@@ -158,16 +165,10 @@ def modelRun():
         KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,14_000,0.02,np.pi/3,'simp',userMinMax=[-1,1],userSamples=uSamples,absolute=False)
         scatter = KA_Object.Scatter(absolute=True,norm=False)
         return scatter/factor   
-    
-    b = np.random.choice(range(0,sample_count),1000)
-
-    plt.figure(figsize=(16,9))
-    plt.grid()
-    plt.plot(truescatter)
 
     for i in range(1000):
         lol = posterior_samples[b[i]].copy()
-        plt.plot(generate_microphone_pressure([lol[0]/10.0,lol[1],lol[2]]),'k',alpha=0.01)
+        plt.plot(generate_microphone_pressure([lol[0],lol[1],lol[2]]),'k',alpha=0.01)
     plt.xlabel("Microphone index")
     plt.ylabel("Response")
     plt.savefig(kernel + " traces.png")
@@ -177,7 +178,7 @@ def modelRun():
     corner.corner(np.array(posterior_samples),bins=200,
               quantiles=[0.16, 0.5, 0.84],labels=[r"$\zeta_1$", r"$\zeta_2$", r"$\zeta_3$"],
               show_titles=True, title_fmt = ".4f")
-
+    plt.savefig(kernel + " corner.png")
     plt.show()
 
     # Create the response array
@@ -188,25 +189,7 @@ def modelRun():
     for i in range(trace_index, len(posterior_samples)):
 
         param = posterior_samples[i]
-
-        def newFunction(x):
-            return SurfaceFunction(x, param)
-        
-        # Add check for your surface function's validity
-        KA_Object = Directed2DVectorised(
-            SourceLocation,
-            RecLoc,
-            newFunction,
-            14000,
-            0.02,
-            np.pi / 3,
-            'simp',
-            userSamples=userSamples,
-           absolute=False
-        )
-        scatter = KA_Object.Scatter(absolute=True, norm=False)
-        scatter = np.array([scatter]).flatten() / factor
-        posterior_responses.append(scatter)
+        posterior_responses.append(generate_microphone_pressure(param))
 
         if i % 10 == 0:
             index = i - trace_index

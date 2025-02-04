@@ -78,10 +78,11 @@ class AcousticParameterMCMC:
 
         with pm.Model() as model:
             # Priors for the three parameters only
-            param1 = pm.HalfNormal('amp', sigma=0.001)       #Amplitude sampling (half normal for now)
+            param1 = pm.LogNormal('amp', mu=-7.0, sigma=1.2) #Amplitude sampling                                                          
             param2 = pm.HalfNormal('wl', sigma=0.08)         #Wavelength sampling
             param3 = pm.Normal('phase', mu=0.0, sigma=0.01)  #Phase sampling as normal prior
-            epsilon= pm.Normal('epsilon', mu=0.1, sigma=0.1) #Scales the error covariance matrix (best results at mean = ~0.25)
+            epsilon= 0.02                                    #Scales the error covariance matrix
+                                                             #Can do as it's own parameter as well, previously was pm.Normal('epsilon', mu=0.1, sigma = 0.1) * 0.075
 
             # Surface function with evaluated parameters (if you need it before sampling)
             def newFunction(x):
@@ -91,11 +92,11 @@ class AcousticParameterMCMC:
             #p1_constraint1 = param1 > 0.0
             #potential = pm.Potential("p1_c1", pm.math.log(pm.math.switch(p1_constraint1, 1, 1e-6)))
 
-            p1_constraint2 = param1 <= (0.21884 - 3 * (343 / self.sourceFrequency))
-            potential = pm.Potential("p1_c2", pm.math.log(pm.math.switch(p1_constraint2, 1, 1e-6)))
+            #p1_constraint2 = param1 <= (0.21884 - 3 * (343 / self.sourceFrequency))
+            #potential = pm.Potential("p1_c2", pm.math.log(pm.math.switch(p1_constraint2, 1, 1e-6)))
 
-            p2_constraint2 = param2 <= 0.4
-            potential = pm.Potential("p2_c2", pm.math.log(pm.math.switch(p2_constraint2, 1, 1e-6)))
+            #p2_constraint2 = param2 <= 0.4
+            #potential = pm.Potential("p2_c2", pm.math.log(pm.math.switch(p2_constraint2, 1, 1e-6)))
 
             #Scatter operation which maintains symbolic links
             KA_Object = Directed2DVectorisedSymbolic(
@@ -111,10 +112,10 @@ class AcousticParameterMCMC:
             )
             scatter = KA_Object.Scatter(absolute=True, norm=False)
             scatter = scatter / factor
-            KA_Object.surfaceChecker(True) #Adds penalty if kirchoff criteria not met
+            #KA_Object.surfaceChecker(True) #Adds penalty if kirchoff criteria not met
 
             # Likelihood: Compare predicted response to observed data
-            likelihood = pm.MvNormal('obs', mu=scatter, cov=np.eye(len(factorizedScatter))*0.075*epsilon, observed=factorizedScatter)
+            likelihood = pm.MvNormal('obs', mu=scatter, cov=np.eye(len(factorizedScatter))*epsilon, observed=factorizedScatter)
 
         trace = []
         posterior_samples = []
@@ -129,7 +130,7 @@ class AcousticParameterMCMC:
         elif kernel == "NUTS":
             with model:
                 # Define the NUTS sampler
-                step = pm.NUTS(target_accept=0.95)
+                step = pm.NUTS(target_accept=0.8)
 
             with model:
                 # Sample from the posterior
