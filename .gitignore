@@ -1,3 +1,5 @@
 .venv/
 .venv311/
 __pycache__/
+results/*.csv
+results/*.png

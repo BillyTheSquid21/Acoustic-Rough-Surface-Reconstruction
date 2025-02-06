@@ -5,9 +5,9 @@ def SymIntegral(y, x, axis=-1):
     Compute the integral of y(x) using the composite Simpson's rule for symbolic tensors.
 
     Parameters:
-        y (pt.Tensor): The tensor to integrate.
-        x (pt.Tensor): The sample points corresponding to y. If None, use uniform spacing `dx`.
-        axis (int, optional): The axis along which to integrate. Default is the last axis.
+        y: The tensor to integrate.
+        x: The sample points corresponding to y. Must be uniformly spaced.
+        axis: The axis along which to integrate. Default is the last axis.
 
     Returns:
         pt.Tensor: The integral computed using Simpson's rule.
@@ -33,6 +33,16 @@ def SymIntegral(y, x, axis=-1):
     return integral
 
 def SymGradient(y, x):
+    '''
+    Compute the gradient of y(x) using the central difference rule for symbolic tensors.
+
+    Parameters:
+        y: The tensor to compute the gradient over. Must be uniformly spaced.
+        x: The sample points corresponding to y.
+
+    Returns:
+        pt.Tensor: The gradient computed using the central difference rule
+    '''
     # Compute dx (assume uniform spacing)
     dx = x[1] - x[0]  # Symbolic spacing
 

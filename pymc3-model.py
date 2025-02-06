@@ -1,13 +1,8 @@
-import pymc as pm
 import numpy as np
 import matplotlib.pyplot as plt
-import arviz as az
 import pytensor
-import pytensor.tensor as pt
-import pickle
 
 from src.Directed2DVectorized import Directed2DVectorised
-from src.Directed2DVectorized import Directed2DVectorisedSymbolic
 from src.AcousticParameterMCMC import AcousticParameterMCMC
 
 def modelRun():
@@ -18,8 +13,8 @@ def modelRun():
         # Add a tiny offset to wavelength as otherwise could div by 0!
         return params[0]*np.cos((2*np.pi*((x/(params[1]+1e-10)) + params[2])))
 
-    # True params
-    p = [0.0015,0.05,0.00]
+    # True params (synthetic!)
+    p = [0.0035,0.05,0.00]
 
     # True surface
     def trueF(x):
@@ -82,9 +77,18 @@ def modelRun():
         0.05334908, 0.03035023, 0.0342647,  0.0377431,  0.03844866, 0.03600139,
         0.02590109, 0.01360588, 0.00829887, 0.00865361]
     
-    truescatter = comp
+    # Real data
+    #truescatter = comp
 
-    np.random.seed(42)
+    # Test synthetic data
+    KA_Object = Directed2DVectorised(SourceLocation,RecLoc,trueF,14_000,0.02,np.pi/3,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
+    truescatter = KA_Object.Scatter(absolute=True,norm=False)
+
+    # Synthetic data, add some random gaussian noise to the samples to make non deterministic
+    # Noise is sampled around 0, with SD
+    noise_sd = 0.0075
+    for i in range(0, len(truescatter)):
+        truescatter[i] += np.random.normal(0, noise_sd)
 
     from pytensor.printing import Print
     import arviz as az
@@ -96,11 +100,11 @@ def modelRun():
     #PT Device
     print("Currently using: ", pytensor.config.device)
 
-    sample_count = 5_000
-    burn_in_count = 10_000
+    sample_count = 50_000
+    burn_in_count = 50_000
     run_model = True
-    kernel = "metropolis-hastings"
-    #kernel = "NUTS"
+    #kernel = "metropolis-hastings"
+    kernel = "NUTS"
     userSamples = 700
     posterior_samples = []
     if run_model:

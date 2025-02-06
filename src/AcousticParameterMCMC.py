@@ -86,24 +86,16 @@ class AcousticParameterMCMC:
             # 6. Calculates the likelihood with the multivariate normal betweem the simulated response and the observed response
 
             # Priors for the three parameters only
-            param1 = pm.LogNormal('amp', mu=-7.0, sigma=1.2) #Amplitude sampling                                                 
+            param1 = pm.TruncatedNormal('amp', mu=0.001, sigma=0.0015, lower=1e-6, upper=0.015) #Amplitude sampling                                                 
             param2 = pm.HalfNormal('wl', sigma=0.08)         #Wavelength sampling
             param3 = pm.Normal('phase', mu=0.0, sigma=0.01)  #Phase sampling
-            epsilon= 0.02                                    #Scales the error covariance matrix for the error between receivers
+            epsilon= 0.05                                    #Scales the error covariance matrix for the error between receivers
 
             # Surface function with evaluated parameters (if you need it before sampling)
             def newFunction(x):
                 return surfaceFunction(x, (param1,param2,param3))
 
             # Check for physical validity and sample
-            p1_constraint1 = param1 > 0.0
-            potential = pm.Potential("p1_c1", pm.math.log(pm.math.switch(p1_constraint1, 1, 1e-6)))
-
-            p2_constraint1 = param2 > 0.0
-            potential = pm.Potential("p2_c1", pm.math.log(pm.math.switch(p2_constraint1, 1, 1e-6)))
-
-            p1_constraint2 = param1 <= (0.21884 - 3 * (343 / self.sourceFrequency))
-            potential = pm.Potential("p1_c2", pm.math.log(pm.math.switch(p1_constraint2, 1, 1e-6)))
 
             p2_constraint2 = param2 <= 0.4
             potential = pm.Potential("p2_c2", pm.math.log(pm.math.switch(p2_constraint2, 1, 1e-6)))
@@ -141,7 +133,7 @@ class AcousticParameterMCMC:
         elif kernel == "NUTS":
             with model:
                 # Define the NUTS sampler
-                step = pm.NUTS(target_accept=0.8)
+                step = pm.NUTS(target_accept=0.238)
 
             with model:
                 # Sample from the posterior
@@ -159,7 +151,7 @@ class AcousticParameterMCMC:
         posterior_samples = np.column_stack((posterior_amps, posterior_wls, posterior_phase))
 
         # Save as CSV
-        np.savetxt(kernel + ".csv", posterior_samples, delimiter=",")
+        np.savetxt("results/" + kernel + ".csv", posterior_samples, delimiter=",")
         print("MCMC Results saved!")
 
         # Save parameter store
