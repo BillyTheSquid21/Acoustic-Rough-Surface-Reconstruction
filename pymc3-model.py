@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import pytensor
 import jax
 
 from src.Directed2DVectorized import Directed2DVectorised
