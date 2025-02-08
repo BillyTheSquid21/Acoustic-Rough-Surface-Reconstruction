@@ -137,7 +137,7 @@ class AcousticParameterMCMC:
 
             with model:
                 # Sample from the posterior
-                trace = pm.sample(tune=burnInCount, draws=sampleCount, step=step, chains=chainCount, return_inferencedata=True)
+                trace = pm.sample(tune=burnInCount, draws=sampleCount, step=step, chains=chainCount, return_inferencedata=True, nuts_sampler="numpyro")
         else:
             raise Exception("Unrecognised kernel name!")
 

@@ -1,11 +1,15 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pytensor
+import jax
 
 from src.Directed2DVectorized import Directed2DVectorised
 from src.AcousticParameterMCMC import AcousticParameterMCMC
 
 def modelRun():
+
+    # Check jax backend
+    print("jax device: ", jax.default_backend(), " ", jax.device_count())
 
     # Surface function
     def SurfaceFunction(x, params):
@@ -97,9 +101,6 @@ def modelRun():
     xsp = np.linspace(ReceiverLocationsX[0],ReceiverLocationsX[-1], 500)
     true = trueF(xsp)
 
-    #PT Device
-    print("Currently using: ", pytensor.config.device)
-
     sample_count = 50_000
     burn_in_count = 50_000
     run_model = True
@@ -109,7 +110,7 @@ def modelRun():
     posterior_samples = []
     if run_model:
         mcmc = AcousticParameterMCMC(cosineCount=len(p), sourceLocation=SourceLocation, receiverLocations=RecLoc, truescatter=truescatter, userSampleDensity=userSamples, sourceFrequency=14_000)
-        mcmc.run(kernel=kernel, surfaceFunction=SurfaceFunction, burnInCount=burn_in_count, sampleCount=sample_count, scaleTrueScatter=True)
+        mcmc.run(kernel=kernel, chainCount=1, surfaceFunction=SurfaceFunction, burnInCount=burn_in_count, sampleCount=sample_count, scaleTrueScatter=True)
         mcmc.plotTrace()
         plt.savefig("results/" + kernel.lower() + " pymc trace.png")
 

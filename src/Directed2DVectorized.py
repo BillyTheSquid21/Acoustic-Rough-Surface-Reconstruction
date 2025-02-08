@@ -1,4 +1,6 @@
+import jax.scipy
 from scipy.integrate import quad
+import scipy.special
 from sklearn.metrics import mean_squared_error
 import numpy as np
 import scipy as sp
@@ -7,8 +9,9 @@ from numpy import matlib as mb
 import corner as corner
 import pytensor.tensor as pt
 import pymc as pm
+import jax
 
-from src.SymbolicMath import SymGradient, SymIntegral
+from src.SymbolicMath import SymGradient, SymIntegral, SymBessel
 from src.SignalAnalysis import *
 
 class Directed2DVectorised:
@@ -292,7 +295,7 @@ class Directed2DVectorisedSymbolic:
 
         theta = np.arccos(l*1/R1) - (- self.sourceAngle + np.pi/2)
 
-        Directivity = (pt.math.j1(self.k*self.a*np.sin(theta)))/(self.k*self.a*np.sin(theta))
+        Directivity = (SymBessel(1,self.k*self.a*np.sin(theta)))/(self.k*self.a*np.sin(theta))
         Directivity_with_nan_handling = pt.switch(pt.isnan(Directivity), 0.5, Directivity)
 
         que = qz - self.derivativeVals*qx

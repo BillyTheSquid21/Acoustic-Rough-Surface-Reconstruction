@@ -1,4 +1,17 @@
+import pytensor
+import pytensor.graph
+import pytensor.graph.op
 import pytensor.tensor as pt
+import jax
+import numpy as np
+
+def SymBessel(n, x):
+    # PyTensor doesn't have a built-in Bessel function, so we use a series expansion
+    bessel_sum = 0
+    for k in range(10):  # 10 terms of the series
+        term = ((-1)**k) * ((x / 2)**(2 * k + n)) / (pt.gamma(k + 1) * pt.gamma(k + n + 1))
+        bessel_sum += term
+    return bessel_sum
 
 def SymIntegral(y, x, axis=-1):
     """
