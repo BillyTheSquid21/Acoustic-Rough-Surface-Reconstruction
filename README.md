@@ -6,7 +6,7 @@ The scripts in this repository can be used to reconstruct a sinusoidal surface f
 
 ![Reconstructed Surface](results/examples/nuts-gpu-solver-100K_IT/GPU_Test.png)
 
-![Reconstructed Surface Response](results/examples/nuts-gpu-solver-100K_IT/GPU_Trace_Scatter.png)
+![Reconstructed Surface Response](results/examples/nuts-gpu-solver-100K_IT/GPU_Test_Trace_Scatter.png)
 
 ![Parameters Corner Plot](results/examples/nuts-gpu-solver-100K_IT/GPU_Test_Corner.png)
 
