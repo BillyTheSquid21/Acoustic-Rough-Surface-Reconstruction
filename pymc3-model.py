@@ -2,8 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import jax
 import arviz as az
-import pytensor
-import pytensor.tensor as pt
+import corner
 
 from src.Directed2DVectorized import Directed2DVectorised
 from src.AcousticParameterMCMC import AcousticParameterMCMC
@@ -177,11 +176,13 @@ def modelRun():
     plt.savefig("results/" + kernel + " traces.png")
     plt.show()
 
-    import corner
-    corner.corner(np.array(posterior_samples),bins=200,
-              quantiles=[0.16, 0.5, 0.84],labels=[r"$\zeta_1$", r"$\zeta_2$", r"$\zeta_3$"],
-              show_titles=True, title_fmt = ".4f")
-    plt.savefig("results/" + kernel + " corner.png")
+    labs = []
+    for i in range(0, len(ptrue)):
+        labs.append("amp" + str(i))
+        labs.append("wl" + str(i))
+        labs.append("phase" + str(i))
+
+    corner.corner(posterior_samples,bins=200,quantiles=[0.16, 0.5, 0.84],labels=labs,show_titles=True,title_fmt=".4f")
     plt.show()
 
     # Create the response array
