@@ -1,27 +1,27 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import jax
+import arviz as az
+import pytensor
+import pytensor.tensor as pt
 
 from src.Directed2DVectorized import Directed2DVectorised
 from src.AcousticParameterMCMC import AcousticParameterMCMC
+
+from src.SymbolicMath import SymCosineSumSurfaceVectorized
+from src.SymbolicMath import SymCosineSumSurface as SurfaceFunctionMulti
 
 def modelRun():
 
     # Check jax backend
     print("jax device: ", jax.default_backend(), " ", jax.device_count())
 
-    # Surface function
-    def SurfaceFunction(x, params):
-        # Is equal to Amp*Cos(2*pi*(x/WL + phase))
-        # Add a tiny offset to wavelength as otherwise could div by 0!
-        return params[0]*np.cos((2*np.pi*((x/(params[1]+1e-10)) + params[2])))
-
     # True params (synthetic!)
-    p = [0.0035,0.05,0.00]
+    ptrue = [(0.0045,0.075,0.00), (0.0015,0.1,0.01)]
 
     # True surface
     def trueF(x):
-        return SurfaceFunction(x, p)
+        return SurfaceFunctionMulti(x, ptrue)
 
     # Microphone array
     SourceLocation = [-0.20049999999999987,0.21884]
@@ -79,7 +79,7 @@ def modelRun():
         0.03456355, 0.02224533, 0.03089714, 0.02583821, 0.03186504, 0.02806474,
         0.05334908, 0.03035023, 0.0342647,  0.0377431,  0.03844866, 0.03600139,
         0.02590109, 0.01360588, 0.00829887, 0.00865361]
-    
+
     # Real data
     #truescatter = comp
 
@@ -93,27 +93,27 @@ def modelRun():
     for i in range(0, len(truescatter)):
         truescatter[i] += np.random.normal(0, noise_sd)
 
-    from pytensor.printing import Print
-    import arviz as az
-
     # True function over linspace
     xsp = np.linspace(ReceiverLocationsX[0],ReceiverLocationsX[-1], 500)
     true = trueF(xsp)
 
-    sample_count = 50_000
-    burn_in_count = 50_000
+    sample_count = 5_000
+    burn_in_count = 5_000
     run_model = True
     #kernel = "metropolis-hastings"
     kernel = "NUTS"
     userSamples = 700
     posterior_samples = []
     if run_model:
-        mcmc = AcousticParameterMCMC(cosineCount=len(p), sourceLocation=SourceLocation, receiverLocations=RecLoc, truescatter=truescatter, userSampleDensity=userSamples, sourceFrequency=14_000)
-        mcmc.run(kernel=kernel, chainCount=1, surfaceFunction=SurfaceFunction, burnInCount=burn_in_count, sampleCount=sample_count, scaleTrueScatter=True)
+        mcmc = AcousticParameterMCMC(cosineCount=3*len(ptrue), sourceLocation=SourceLocation, receiverLocations=RecLoc, truescatter=truescatter, userSampleDensity=userSamples, sourceFrequency=14_000)
+        mcmc.run(kernel=kernel, chainCount=1, surfaceFunction=SymCosineSumSurfaceVectorized, burnInCount=burn_in_count, sampleCount=sample_count, scaleTrueScatter=True)
         mcmc.plotTrace()
         plt.savefig("results/" + kernel.lower() + " pymc trace.png")
 
     posterior_samples = np.loadtxt("results/" + kernel + ".csv", delimiter=",")
+    
+    # Convert each row into 3-element tuples for better multi
+    posterior_samples_grouped = [list(zip(*row.reshape(-1, 3).T)) for row in posterior_samples]
 
     #Scale true scatter here to compare to parameters
     factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, RecLoc, 14_000, 700)
@@ -122,12 +122,12 @@ def modelRun():
     # Creates a surface from each parameter set
     print("Creating posterior sample surfaces")
     surfs = []
-    for _ in posterior_samples:
+    for _ in posterior_samples_grouped:
         hmm2 =  _.copy()
-        surfs.append(SurfaceFunction(xsp,hmm2))
+        surfs.append(SurfaceFunctionMulti(xsp,hmm2))
 
     print("Creating mean of parameters surface")
-    mean = SurfaceFunction(xsp,np.mean(posterior_samples,axis=0))
+    mean = SurfaceFunctionMulti(xsp,np.mean(posterior_samples_grouped,axis=0))
 
     print("Creating mean of all surfaces")
     mean_surf = np.mean(surfs, axis=0)
@@ -136,7 +136,6 @@ def modelRun():
     mins = []
     maxx = []
     for _ in range(500):
-        print(round((_ / 500) * 100, 2), "%")
         vals = az.hdi(np.array(surfs).T[_],hdi_prob=0.68)
         mins.append(vals[0])
         maxx.append(vals[1])
@@ -164,15 +163,15 @@ def modelRun():
 
     def generate_microphone_pressure(parameters,uSamples=userSamples):
         def newFunction(x):
-            return SurfaceFunction(x, parameters)
+            return SurfaceFunctionMulti(x, parameters)
 
         KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,14_000,0.02,np.pi/3,'simp',userMinMax=[-1,1],userSamples=uSamples,absolute=False)
         scatter = KA_Object.Scatter(absolute=True,norm=False)
         return scatter/factor   
 
     for i in range(1000):
-        lol = posterior_samples[b[i]].copy()
-        plt.plot(generate_microphone_pressure([lol[0],lol[1],lol[2]]),'k',alpha=0.01)
+        lol = posterior_samples_grouped[b[i]].copy()
+        plt.plot(generate_microphone_pressure(lol),'k',alpha=0.01)
     plt.xlabel("Microphone index")
     plt.ylabel("Response")
     plt.savefig("results/" + kernel + " traces.png")
@@ -190,9 +189,9 @@ def modelRun():
     trace_count = 50
     trace_index = len(posterior_samples) - trace_count
     posterior_responses = []
-    for i in range(trace_index, len(posterior_samples)):
+    for i in range(trace_index, len(posterior_samples_grouped)):
 
-        param = posterior_samples[i]
+        param = posterior_samples_grouped[i]
         posterior_responses.append(generate_microphone_pressure(param))
 
         if i % 10 == 0:

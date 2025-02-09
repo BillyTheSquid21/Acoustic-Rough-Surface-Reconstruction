@@ -11,4 +11,13 @@ The scripts in this repository can be used to reconstruct a sinusoidal surface f
 ![Parameters Corner Plot](results/examples/nuts-gpu-solver-100K_IT/GPU_Test_Corner.png)
 
 ## Build
-Clone the repository and run the main.py script with the requirements listed in the requirements.txt file. These can be installed by running `python pip install -r requirements.txt`. It is recommended to set up a virtual environment in the repository to install the packages to.
+
+#### All
+Clone the repository and run the main.py script with the requirements listed in the requirements.txt file. These can be installed by running `python pip install -r requirements.txt`. It is recommended to set up a virtual environment in the repository to install the packages to. 
+
+#### Linux Specific
+Ensure the "libatlas-base-dev" library is installed so that pytensor can link for BLAS operations. 
+
+On Debian systems for example this can be installed by running:
+
+```sudo apt-get install libatlas-base-dev```

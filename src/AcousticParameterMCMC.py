@@ -2,10 +2,12 @@ import pymc as pm
 import numpy as np
 import arviz as az
 
+import pytensor
+import pytensor.tensor as pt
+
 from src.Directed2DVectorized import Directed2DVectorised
 from src.Directed2DVectorized import Directed2DVectorisedSymbolic
 
-#TODO: Extend to more parameters
 class AcousticParameterMCMC:
     '''
     A class that runs an MCMC sampling model to recover the parameters of a cosine series acoustic surface
@@ -65,6 +67,9 @@ class AcousticParameterMCMC:
         scaleTrueScatter: Sets whether to scale the true scatter by the flat plate response.
         '''
 
+        # Raises memory usage but should be more efficient
+        pytensor.config.allow_gc=False
+
         factor = 1.0
         if scaleTrueScatter:
             factor = AcousticParameterMCMC.GenerateFactor(self.sourceLocation, self.receiverLocations, self.sourceFrequency, self.userSampleDensity)
@@ -72,9 +77,13 @@ class AcousticParameterMCMC:
         factorizedScatter = self.trueScatter/factor
         factorizedScatter = factorizedScatter
 
-        # Calculate the measurement error
-        # The error between the receivers is considered independent so this is diagonal
-        #error = np.eye(len(factorizedScatter))*np.mean(factorizedScatter)
+        if not self.cosineCount % 3 == 0:
+            raise Exception("Surface parameter count must be multiples of 3!")
+        
+        if self.cosineCount == 0:
+            raise Exception("Cannot have a surface with no parameters!")
+        
+        N = int(self.cosineCount / 3)
 
         with pm.Model() as model:
             # Model works by:
@@ -85,20 +94,16 @@ class AcousticParameterMCMC:
             # 5. Apply a penalty if fails the surface check
             # 6. Calculates the likelihood with the multivariate normal betweem the simulated response and the observed response
 
-            # Priors for the three parameters only
-            param1 = pm.TruncatedNormal('amp', mu=0.001, sigma=0.0015, lower=1e-6, upper=0.015) #Amplitude sampling                                                 
-            param2 = pm.HalfNormal('wl', sigma=0.08)         #Wavelength sampling
-            param3 = pm.Normal('phase', mu=0.0, sigma=0.01)  #Phase sampling
-            epsilon= 0.05                                    #Scales the error covariance matrix for the error between receivers
+            # Priors for each set of 3 params
+            param1 = pm.TruncatedNormal('amp', mu=0.001, sigma=0.0015, lower=1e-6, upper=0.015, shape=(N,)) #Amplitude sampling                                                 
+            param2 = pm.TruncatedNormal('wl', sigma=0.08, lower=1e-6, upper=0.4, shape=(N,))                #Wavelength sampling
+            param3 = pm.TruncatedNormal('phase', mu=0.0, sigma=0.01, lower=-1.0, upper=1.0, shape=(N,))     #Phase sampling
+
+            epsilon= 0.05  #Scales the error covariance matrix for the error between receivers
 
             # Surface function with evaluated parameters (if you need it before sampling)
             def newFunction(x):
-                return surfaceFunction(x, (param1,param2,param3))
-
-            # Check for physical validity and sample
-
-            p2_constraint2 = param2 <= 0.4
-            potential = pm.Potential("p2_c2", pm.math.log(pm.math.switch(p2_constraint2, 1, 1e-6)))
+                return surfaceFunction(x, param1, param2, param3)
 
             # Scatter operation which maintains symbolic links
             # Gives the same results as Directed2DVectorized class
@@ -140,23 +145,39 @@ class AcousticParameterMCMC:
                 trace = pm.sample(tune=burnInCount, draws=sampleCount, step=step, chains=chainCount, return_inferencedata=True, nuts_sampler="numpyro")
         else:
             raise Exception("Unrecognised kernel name!")
+        
+        # pymc statistics
+        #model.profile(model.logp()).summary()
+        #model.profile(pm.gradient(model.logp(), vars=None)).summary()
 
-        # Flatten arrays
+        # Flatten arrays with some numpy shaping trickery
+        # Gives us columns so that each set of 3 params are next to each other
+        total_samples = chainCount*sampleCount
+
         posterior = trace.posterior
-        posterior_amps = posterior['amp'].values.flatten()
-        posterior_wls = posterior['wl'].values.flatten()
-        posterior_phase = posterior['phase'].values.flatten()
+        amps = posterior['amp'].values.transpose(2, 0, 1).reshape(N, total_samples)
+        wls = posterior['wl'].values.transpose(2, 0, 1).reshape(N, total_samples)
+        phases = posterior['phase'].values.transpose(2, 0, 1).reshape(N, total_samples)
 
-        # Combine into a 2D array (rows = samples, columns = variables)
-        posterior_samples = np.column_stack((posterior_amps, posterior_wls, posterior_phase))
+        posterior_samples = np.row_stack((amps,wls,phases)).T
+        posterior_samples = posterior_samples.reshape(total_samples, 3, N).transpose(0, 2, 1)
+        posterior_samples = posterior_samples.reshape(total_samples, N*3)
 
-        # Save as CSV
-        np.savetxt("results/" + kernel + ".csv", posterior_samples, delimiter=",")
+        # Save to csv with header
+        np.savetxt("results/" + kernel + ".csv", posterior_samples, delimiter=",", header=self._generateHeader(), fmt="%s")
+
         print("MCMC Results saved!")
 
         # Save parameter store
         self.posteriorSamples = posterior_samples
         self.trace = trace
+
+    def _generateHeader(self):
+        header_string = ""
+        for i in range(0, int(self.cosineCount / 3)):
+            itxt = str(i)
+            header_string += "amp" + itxt + "," + "wl" + itxt + "," + "phase" + itxt + ","
+        return header_string
 
     def plotTrace(self):
         '''
