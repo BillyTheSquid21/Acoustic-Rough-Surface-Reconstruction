@@ -183,6 +183,7 @@ def modelRun():
         labs.append("phase" + str(i))
 
     corner.corner(posterior_samples,bins=200,quantiles=[0.16, 0.5, 0.84],labels=labs,show_titles=True,title_fmt=".4f")
+    plt.savefig("results/" + kernel + " traces.png")
     plt.show()
 
     # Create the response array
