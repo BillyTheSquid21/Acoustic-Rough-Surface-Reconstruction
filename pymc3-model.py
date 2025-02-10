@@ -16,7 +16,7 @@ def modelRun():
     print("jax device: ", jax.default_backend(), " ", jax.device_count())
 
     # True params (synthetic!)
-    ptrue = [(0.0045,0.075,0.00), (0.0015,0.1,0.01)]
+    ptrue = [(0.0045,0.075,0.00), (0.0015,0.1,0.00)]
 
     # True surface
     def trueF(x):
@@ -96,8 +96,8 @@ def modelRun():
     xsp = np.linspace(ReceiverLocationsX[0],ReceiverLocationsX[-1], 500)
     true = trueF(xsp)
 
-    sample_count = 5_000
-    burn_in_count = 5_000
+    sample_count = 50_000
+    burn_in_count = 50_000
     run_model = True
     #kernel = "metropolis-hastings"
     kernel = "NUTS"

@@ -4,3 +4,4 @@ __pycache__/
 results/*.csv
 results/*.png
 results/*.txt
+model_graph*

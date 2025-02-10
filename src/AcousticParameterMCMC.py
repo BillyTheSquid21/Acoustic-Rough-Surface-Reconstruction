@@ -43,8 +43,6 @@ class AcousticParameterMCMC:
         userSampleDensity: The density of samples in the simulated scatter. Relates to resolution rather than sampling rate.
         sourceFrequency: The frequency of the source acoustic wave
         '''
-        
-        assert cosineCount % 3 == 0
 
         self.cosineCount = cosineCount
         self.sourceLocation = sourceLocation
@@ -77,13 +75,10 @@ class AcousticParameterMCMC:
         factorizedScatter = self.trueScatter/factor
         factorizedScatter = factorizedScatter
 
-        if not self.cosineCount % 3 == 0:
-            raise Exception("Surface parameter count must be multiples of 3!")
-        
         if self.cosineCount == 0:
             raise Exception("Cannot have a surface with no parameters!")
         
-        N = int(self.cosineCount / 3)
+        N = self.cosineCount
 
         with pm.Model() as model:
             # Model works by:
@@ -101,9 +96,22 @@ class AcousticParameterMCMC:
 
             epsilon= 0.05  #Scales the error covariance matrix for the error between receivers
 
+            # Apply a penalty for strictly decreasing order for at least one set of parameters
+            # Penalize when values increase (i.e., not strictly decreasing)
+            amplitude_penalty = pt.sum(pt.switch(pt.lt(param1[:-1], param1[1:]), 0, 1e6))  # Strictly decreasing amplitude penalty
+            wavelength_penalty = pt.sum(pt.switch(pt.lt(param2[:-1], param2[1:]), 0, 1e6)) # Strictly decreasing wavelength penalty
+            phase_penalty = pt.sum(pt.switch(pt.lt(param3[:-1], param3[1:]), 0, 1e6))      # Strictly decreasing phase penalty
+
+            # Combine penalties using OR logic (min penalty ensures that at least one order is maintained)
+            # As unless every component wave is the same at least one set of parameters can provide a preference for which element is which wave
+            combined_penalty = pt.minimum(amplitude_penalty, pt.minimum(wavelength_penalty, phase_penalty))
+
+            # Add the combined penalty as a potential to the model
+            pm.Potential('combined_order_penalty', combined_penalty)
+
             # Surface function with evaluated parameters (if you need it before sampling)
             def newFunction(x):
-                return surfaceFunction(x, param1, param2, param3)
+                return surfaceFunction(pt.as_tensor_variable(x), param1, param2, param3)
 
             # Scatter operation which maintains symbolic links
             # Gives the same results as Directed2DVectorized class
@@ -120,10 +128,14 @@ class AcousticParameterMCMC:
             )
             scatter = KA_Object.Scatter(absolute=True, norm=False)
             scatter = scatter / factor
-            KA_Object.surfaceChecker(True) #Adds pm.Potential penalty if kirchoff criteria not met
+            KA_Object.surfaceChecker() #Adds pm.Potential penalty if kirchoff criteria not met
 
             # Likelihood: Compare predicted response to observed data
             likelihood = pm.MvNormal('obs', mu=scatter, cov=np.eye(len(factorizedScatter))*epsilon, observed=factorizedScatter)
+
+        # View model graph
+        #graph = pm.model_to_graphviz(model)
+        #graph.render("model_graph", format="png", view=True)  # Saves and opens the file
 
         trace = []
         posterior_samples = []

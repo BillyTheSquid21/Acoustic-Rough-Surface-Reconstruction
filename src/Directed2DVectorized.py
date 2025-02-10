@@ -216,7 +216,7 @@ class Directed2DVectorisedSymbolic:
         absolute: Bool, absolute value
         '''
 
-        self.sourceLocation = np.array(sourceLocation)
+        self.sourceLocation = pt.as_tensor_variable(sourceLocation)
         self.receiverLocationsX = np.array(receiverLocations)[:,0]
         self.receiverLocationsY = np.array(receiverLocations)[:,1]
         self.k = (2*np.pi*frequency)/343
@@ -232,12 +232,12 @@ class Directed2DVectorisedSymbolic:
             self.max = userMinMax[1]
         self.number = self.receiverLocationsX.shape[0]
         self.samples = userSamples
-        self.receiverLocationsX = self.receiverLocationsX.reshape(-1,1) + np.zeros((self.number,self.samples))
-        self.receiverLocationsY = self.receiverLocationsY.reshape(-1,1) + np.zeros((self.number,self.samples))
-        self.sourceLocationX = self.sourceLocation[0] + np.zeros((self.number,self.samples))
-        self.sourceLocationY = self.sourceLocation[1] + np.zeros((self.number,self.samples))
+        self.receiverLocationsX = pt.as_tensor_variable(self.receiverLocationsX.reshape(-1,1)) + pt.zeros((self.number,self.samples))
+        self.receiverLocationsY = pt.as_tensor_variable(self.receiverLocationsY.reshape(-1,1)) + pt.zeros((self.number,self.samples))
+        self.sourceLocationX = self.sourceLocation[0] + pt.zeros((self.number,self.samples))
+        self.sourceLocationY = self.sourceLocation[1] + pt.zeros((self.number,self.samples))
 
-        self.x = np.linspace(self.min,self.max,self.samples).reshape(1,-1) + np.zeros((self.number,self.samples)) #see if this can be changed
+        self.x = pt.as_tensor_variable(np.linspace(self.min,self.max,self.samples).reshape(1,-1) + np.zeros((self.number,self.samples))) #see if this can be changed
         self.surfaceVals = surfaceFunction(self.x)
         self.derivativeVals = SymGradient(self.surfaceVals[0], self.x[0])
         self.doubleDerivativeVals = SymGradient(self.derivativeVals, self.x[0])
@@ -249,37 +249,34 @@ class Directed2DVectorisedSymbolic:
             self.surfaceVals = self.surfaceVals + pt.zeros((self.number,self.samples))
             self.derivativeVals = self.derivativeVals + pt.zeros((self.number,self.samples))
 
-
-    def surfaceChecker(self, relaxed=True, hyper_accurate=False):
-
+    def _potential_func(self, condition_max):
         '''
-        Check if the surface satisfies the Kirchhoff criteria.
-        Inputs:
-        relaxed - Increases from source angle to 1, although it seems it's just 1
-        hyper_accuare - More accurate calculation for highly oscillatory functions, when there is no array defining surface
-        elevation.
-        '''
-        if not hyper_accurate:
-            #self.doubleDerivativeVals = sp.misc.derivative(self.surfaceFunction,self.x,n=2)
-            numerator = 1 + (self.derivativeVals)**2
-            denominator = self.doubleDerivativeVals
+        Adds a quick falloff after Kirchoff criteria fails to allow some threshold.
 
-        else:
-            #For highly oscillatory functions
-            #TODO: When needed convert to symbolic
-            #x = np.linspace(self.min, self.max, 10*self.samples)
-            #fun_val = self.surfaceFunction(x)
-            #derivativeVals = np.gradient(fun_val, x[1] - x[0],edge_order=2, axis=None)
-            #doublederivativeVals = np.gradient(derivativeVals, x[1] - x[0],edge_order=2, axis=None)
-            #numerator = 1 + derivativeVals**2
-            #denominator = doublederivativeVals
-            pass
+        A hard cutoff seems to screw up the gradient calculations and slow them down
+        '''
+
+        #A larger falloff factor will result in harsher adherence to the criteria
+        falloff_factor = 50
+        return (pt.power(condition_max,(-falloff_factor*condition_max))) + 1e-10
+
+    def surfaceChecker(self):
+        '''
+        Check if the surface satisfies the Kirchhoff criteria. Adds a falloff potential if fails.
+        '''
+
+        x = pt.linspace(self.min, self.max, 10*self.samples)
+        fun_val = self.surfaceFunction(x)
+        derivativeVals = SymGradient(fun_val, x)
+        doublederivativeVals = SymGradient(derivativeVals, x)
+        numerator = 1 + derivativeVals**2
+        denominator = doublederivativeVals
 
         self.curvature = (numerator**1.5)/np.abs((denominator))
         self.condition = 1/((self.k*self.curvature)**0.333333333)
 
         surf_constraint = self.condition.max() > 1
-        potential = pm.Potential("surface_c", pm.math.log(pm.math.switch(surf_constraint, 1, 1e-10)))
+        potential = pm.Potential("surface_c", pm.math.log(pm.math.switch(surf_constraint, 1, self._potential_func(self.condition.max()))))
 
     def __Integrand(self):
 
