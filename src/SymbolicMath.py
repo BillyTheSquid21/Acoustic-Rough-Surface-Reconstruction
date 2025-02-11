@@ -4,7 +4,7 @@ import pytensor.graph.op
 import pytensor.tensor as pt
 import numpy as np
 
-def randomSurface2(beta, x, t, velocity, depth, lM, lm, aw = 1e-3):
+def SymRandomSurface(beta, x, t, velocity, depth, lM, lm, aw = 1e-3):
   g = 9.81
   surface_tension = 72.75e-03
   density = 998.2
@@ -23,7 +23,6 @@ def randomSurface2(beta, x, t, velocity, depth, lM, lm, aw = 1e-3):
   Nt = np.arange(-omega/2, omega/2, Domega)
 
   Kx = np.arange(-ksx/2, ksx/2, Dkx)
-  K_y = Kx
   Kx = np.tile(Kx,[int(len(Nt)),1])
 
   t = np.tile(np.array(t), [Kx.shape[1],1])
@@ -78,7 +77,7 @@ def SymCosineSurfaceVectorized(x, amp, wl, p):
         pytensor.Tensor: A single cosine surface contribution
     
     """
-    return amp * np.cos(2 * np.pi * ((x / (wl + 1e-10)) + p))
+    return amp * pt.cos(2 * pt.pi * ((x / (wl + 1e-10)) + p))
 
 def SymCosineSumSurfaceVectorized(x, amps, wls, ps):
     """

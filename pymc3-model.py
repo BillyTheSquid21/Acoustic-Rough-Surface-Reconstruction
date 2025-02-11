@@ -9,18 +9,33 @@ from src.AcousticParameterMCMC import AcousticParameterMCMC
 
 from src.SymbolicMath import SymCosineSumSurfaceVectorized
 from src.SymbolicMath import SymCosineSumSurface as SurfaceFunctionMulti
+from src.SymbolicMath import SymCosineSurface
+from src.SymbolicMath import SymRandomSurface
 
 def modelRun():
+
+    # Define parameters for the function call
+    beta = 3  # Example spectral exponent
+    x = np.linspace(-1, 1, 700)  # Spatial domain from -1 to 1
+    velocity = 0.0  # Example velocity
+    depth = 10  # Example depth
+    lM = 1.0  # Large scale cutoff
+    lm = 0.1  # Small scale cutoff
+    aw = 4e-3  # Scaling factor
+
+    surface = SymRandomSurface(beta, x, [0,0.0001], velocity, depth, lM, lm, aw)
+    y_values = surface[0, :]  # Take first time element slice
 
     # Check jax backend
     print("jax device: ", jax.default_backend(), " ", jax.device_count())
 
     # True params (synthetic!)
-    ptrue = [(0.0045,0.075,0.00), (0.0015,0.1,0.00)]
+    #ptrue = [(0.0045,0.075,0.00), (0.0015,0.1,0.00)]
+    cosine_count = 20
 
     # True surface
-    def trueF(x):
-        return SurfaceFunctionMulti(x, ptrue)
+    #def trueF(x):
+    #    return SurfaceFunctionMulti(x, ptrue)
 
     # Microphone array
     SourceLocation = [-0.20049999999999987,0.21884]
@@ -83,29 +98,44 @@ def modelRun():
     #truescatter = comp
 
     # Test synthetic data
-    KA_Object = Directed2DVectorised(SourceLocation,RecLoc,trueF,14_000,0.02,np.pi/3,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
+    KA_Object = Directed2DVectorised(SourceLocation,RecLoc,np.array(y_values),14_000,0.02,np.pi/3,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
     truescatter = KA_Object.Scatter(absolute=True,norm=False)
 
     # Synthetic data, add some random gaussian noise to the samples to make non deterministic
     # Noise is sampled around 0, with SD
-    noise_sd = 0.0075
+    noise_sd = 0.0020
     for i in range(0, len(truescatter)):
         truescatter[i] += np.random.normal(0, noise_sd)
 
     # True function over linspace
-    xsp = np.linspace(ReceiverLocationsX[0],ReceiverLocationsX[-1], 500)
-    true = trueF(xsp)
+    xsp = np.linspace(ReceiverLocationsX[0],ReceiverLocationsX[-1], 700)
+    #true = trueF(xsp)
 
-    sample_count = 50_000
-    burn_in_count = 50_000
+    sample_count = 150_000
+    burn_in_count = 150_000
     run_model = True
     #kernel = "metropolis-hastings"
     kernel = "NUTS"
     userSamples = 700
     posterior_samples = []
     if run_model:
-        mcmc = AcousticParameterMCMC(cosineCount=3*len(ptrue), sourceLocation=SourceLocation, receiverLocations=RecLoc, truescatter=truescatter, userSampleDensity=userSamples, sourceFrequency=14_000)
-        mcmc.run(kernel=kernel, chainCount=1, surfaceFunction=SymCosineSumSurfaceVectorized, burnInCount=burn_in_count, sampleCount=sample_count, scaleTrueScatter=True)
+        mcmc = AcousticParameterMCMC(cosineCount=cosine_count, 
+                                     sourceLocation=SourceLocation, 
+                                     receiverLocations=RecLoc, 
+                                     truescatter=truescatter, 
+                                     userSampleDensity=userSamples, 
+                                     sourceFrequency=14_000,
+                                     beta=beta,
+                                     wl_scale=[lm, lM])
+        
+        mcmc.run(kernel=kernel, 
+                 chainCount=1, 
+                 surfaceFunction=SymCosineSumSurfaceVectorized, 
+                 burnInCount=burn_in_count, 
+                 sampleCount=sample_count, 
+                 scaleTrueScatter=True,
+                 targetAccRate=0.1)
+        
         mcmc.plotTrace()
         plt.savefig("results/" + kernel.lower() + " pymc trace.png")
 
@@ -134,7 +164,7 @@ def modelRun():
     print("Plotting confidence interval")
     mins = []
     maxx = []
-    for _ in range(500):
+    for _ in range(700):
         vals = az.hdi(np.array(surfs).T[_],hdi_prob=0.68)
         mins.append(vals[0])
         maxx.append(vals[1])
@@ -146,7 +176,7 @@ def modelRun():
     plt.grid()
     plt.fill_between(xsp,mins,maxx,color='grey',alpha=0.5,label='68% Credible interval')
     plt.plot(xsp,mean,label='Surface formed from the mean of the ' + kernel + ' model parameter')
-    plt.plot(xsp,true,label='True surface')
+    plt.plot(xsp,y_values,label='True surface')
     plt.plot(xsp,mean_surf, label='Surface formed from the mean of the generated ' + kernel + ' model functions')
     plt.legend(loc='upper right')
 
@@ -174,16 +204,16 @@ def modelRun():
     plt.xlabel("Microphone index")
     plt.ylabel("Response")
     plt.savefig("results/" + kernel + " traces.png")
-    plt.show()
 
+    print("Plotting corner")
     labs = []
-    for i in range(0, len(ptrue)):
+    for i in range(0, cosine_count):
         labs.append("amp" + str(i))
         labs.append("wl" + str(i))
         labs.append("phase" + str(i))
 
     corner.corner(posterior_samples,bins=200,quantiles=[0.16, 0.5, 0.84],labels=labs,show_titles=True,title_fmt=".4f")
-    plt.savefig("results/" + kernel + " traces.png")
+    plt.savefig("results/" + kernel + " corner.png")
     plt.show()
 
     # Create the response array

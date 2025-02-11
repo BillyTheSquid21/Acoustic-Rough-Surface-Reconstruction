@@ -31,7 +31,7 @@ class AcousticParameterMCMC:
         flatscatter = flat.Scatter(absolute=True,norm=False)
         return flatscatter.max().copy()
 
-    def __init__(self, cosineCount, sourceLocation, receiverLocations, truescatter, userSampleDensity=700, sourceFrequency=14_000):
+    def __init__(self, cosineCount, sourceLocation, receiverLocations, truescatter, userSampleDensity=700, sourceFrequency=14_000, beta=3, wl_scale=[0.1, 1.0]):
         '''
         Init function for the AcousticParameterMCMC class
 
@@ -50,18 +50,21 @@ class AcousticParameterMCMC:
         self.sourceFrequency = sourceFrequency
         self.userSampleDensity = userSampleDensity
         self.trueScatter = truescatter
+        self.beta = beta
+        self.wl_scale = wl_scale
 
-    def run(self, surfaceFunction=None, kernel="NUTS", burnInCount=2000, sampleCount=5000, chainCount=4, scaleTrueScatter=True):
+    def run(self, surfaceFunction=None, kernel="NUTS", burnInCount=2000, sampleCount=5000, chainCount=4, targetAccRate=0.238, scaleTrueScatter=True):
         '''
         Runs the pymc model with the selected kernel. Stores the parameters and trace afterwards.
         Also outputs the parameters as a .csv with the file name "kernel + .csv"
 
         Inputs:
-        surfaceFunction: A function that takes x and 3 parameters. TODO: extend to 6+
+        surfaceFunction: A function that takes x and 3 parameters.
         kernel: The type of kernel to use. Currently supports "metropolis-hastings" and "NUTS"
         burnInCount: The number of burn in iterations. Will be discarded.
         sampleCount: The number of samples to run the chain for.
         chainCount: The number of parallel chains to run. Useful for getting diagnostics.
+        tragetAccRate: The target acceptance rate.
         scaleTrueScatter: Sets whether to scale the true scatter by the flat plate response.
         '''
 
@@ -80,38 +83,30 @@ class AcousticParameterMCMC:
         
         N = self.cosineCount
 
-        with pm.Model() as model:
-            # Model works by:
-            # 1. Sample each parameter from their respective prior
-            # 2. Apply a penalty if out of bounds
-            # 3. Simulates the scattering of the acoustic waves against a surface from the parameters
-            # 4. Scales the scattered signal by the factor from the flat plate response
-            # 5. Apply a penalty if fails the surface check
-            # 6. Calculates the likelihood with the multivariate normal betweem the simulated response and the observed response
+        # Generate the wavelength distributions
+        # Special case for N = 1 is just the first element
+        wl_means = pt.as_tensor_variable([self.wl_scale[0]])
+        wl_sds = wl_means**1.1
 
-            # Priors for each set of 3 params
-            param1 = pm.TruncatedNormal('amp', mu=0.001, sigma=0.0015, lower=1e-6, upper=0.015, shape=(N,)) #Amplitude sampling                                                 
-            param2 = pm.TruncatedNormal('wl', sigma=0.08, lower=1e-6, upper=0.4, shape=(N,))                #Wavelength sampling
-            param3 = pm.TruncatedNormal('phase', mu=0.0, sigma=0.01, lower=-1.0, upper=1.0, shape=(N,))     #Phase sampling
+        if N != 1:
+            wl_means = pt.as_tensor_variable(np.logspace(np.log(self.wl_scale[0]), np.log(self.wl_scale[1]), N))
+            wl_sds = wl_means**1.1
+
+        with pm.Model() as model:
+
+            # Priors for each set of 3 params       
+            # Amplitudes depend on wavelengths                        
+            wavelengths = pm.TruncatedNormal('wl', mu=wl_means, sigma=wl_sds, lower=1e-8, upper=0.4, shape=(N,))   
+            phases = pm.TruncatedNormal('phase', mu=0.0, sigma=1.0, lower=-1.0, upper=1.0, shape=(N,))
+
+            amp_means, amp_sds = self._amplitudePowerLaw(wavelengths)
+            amplitudes = pm.TruncatedNormal('amp', mu=amp_means, sigma=amp_sds, lower=1e-8, upper=0.025, shape=(N,))
 
             epsilon= 0.05  #Scales the error covariance matrix for the error between receivers
 
-            # Apply a penalty for strictly decreasing order for at least one set of parameters
-            # Penalize when values increase (i.e., not strictly decreasing)
-            amplitude_penalty = pt.sum(pt.switch(pt.lt(param1[:-1], param1[1:]), 0, 1e6))  # Strictly decreasing amplitude penalty
-            wavelength_penalty = pt.sum(pt.switch(pt.lt(param2[:-1], param2[1:]), 0, 1e6)) # Strictly decreasing wavelength penalty
-            phase_penalty = pt.sum(pt.switch(pt.lt(param3[:-1], param3[1:]), 0, 1e6))      # Strictly decreasing phase penalty
-
-            # Combine penalties using OR logic (min penalty ensures that at least one order is maintained)
-            # As unless every component wave is the same at least one set of parameters can provide a preference for which element is which wave
-            combined_penalty = pt.minimum(amplitude_penalty, pt.minimum(wavelength_penalty, phase_penalty))
-
-            # Add the combined penalty as a potential to the model
-            pm.Potential('combined_order_penalty', combined_penalty)
-
-            # Surface function with evaluated parameters (if you need it before sampling)
+            # Surface function with evaluated parameters (if you need it before sampling)rt
             def newFunction(x):
-                return surfaceFunction(pt.as_tensor_variable(x), param1, param2, param3)
+                return surfaceFunction(pt.as_tensor_variable(x), amplitudes, wavelengths, phases)
 
             # Scatter operation which maintains symbolic links
             # Gives the same results as Directed2DVectorized class
@@ -150,7 +145,7 @@ class AcousticParameterMCMC:
         elif kernel == "NUTS":
             with model:
                 # Define the NUTS sampler
-                step = pm.NUTS(target_accept=0.238)
+                step = pm.NUTS(target_accept=targetAccRate)
 
             with model:
                 # Sample from the posterior
@@ -184,9 +179,18 @@ class AcousticParameterMCMC:
         self.posteriorSamples = posterior_samples
         self.trace = trace
 
+    def _amplitudePowerLaw(self, wavelengths):
+        '''
+        Calculates the amplitude distributions assuming follows a wavelength power law
+        '''
+        wavenumbers = pt.abs((2.0*pt.pi)/wavelengths)
+        amps_means = wavenumbers**(-self.beta/2.0)
+        amps_sds = amps_means**1.1
+        return amps_means, amps_sds
+
     def _generateHeader(self):
         header_string = ""
-        for i in range(0, int(self.cosineCount / 3)):
+        for i in range(0, self.cosineCount):
             itxt = str(i)
             header_string += "amp" + itxt + "," + "wl" + itxt + "," + "phase" + itxt + ","
         return header_string
