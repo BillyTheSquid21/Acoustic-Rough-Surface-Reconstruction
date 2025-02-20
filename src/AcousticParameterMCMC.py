@@ -1,6 +1,7 @@
 import pymc as pm
 import numpy as np
 import arviz as az
+import shutil
 
 import pytensor
 import pytensor.tensor as pt
@@ -29,6 +30,9 @@ class AcousticParameterMCMC:
         pistonAperture: The aperture size of the baffled piston approximation
         sourceFrequency: The frequency of the source acoustic wave
         userSampleDensity: The density of samples in the simulated scatter. Relates to resolution rather than sampling rate. 
+
+        Returns:
+        float: The factor for normalization
         '''
 
         def zero(x):
@@ -40,11 +44,20 @@ class AcousticParameterMCMC:
     
     def LoadCSVData(path):
         '''
-        Loads data from CSV and formats it to work with the symbolic math cosine sum functions
+        Loads data from CSV and formats it to work with the symbolic math cosine sum functions.
+        If data is compressed in tar.gz format will silently unzip
 
         Inputs:
         path: The path to the data
+
+        Returns:
+        numpy.array: A formatted array containing each set of parameters in (amp,wl,phase) tuples
         '''
+        if path.endswith("tar.gz"):
+            new_path = path.replace("tar.gz", "csv")
+            shutil.unpack_archive(path, new_path)
+            path = new_path
+
         posterior_samples = np.loadtxt(path, delimiter=",")
     
         # Convert each row into 3-element tuples for better multi
@@ -53,6 +66,9 @@ class AcousticParameterMCMC:
     def generateFactor(self):
         '''
         Generates a factor to scale response by flat plate response
+
+        Returns:
+        float: The factor for normalization
         '''
         return AcousticParameterMCMC.GenerateFactor(self.sourceLocation, self.sourceAngle, self.receiverLocations, self.pistonAperture, self.sourceFrequency, self.userSampleDensity)
 
