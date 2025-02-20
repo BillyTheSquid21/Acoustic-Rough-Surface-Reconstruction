@@ -13,13 +13,20 @@ class AcousticParameterMCMC:
     A class that runs an MCMC sampling model to recover the parameters of a cosine series acoustic surface
     '''
 
-    def GenerateFactor(sourceLocation, receiverLocations, sourceFrequency=14_000, userSamples=700):
+    _amplitudeProposal = None
+    _phaseProposal = None
+    _wavelengthProposal = None
+    _wavelengths = None
+
+    def GenerateFactor(sourceLocation, sourceAngle, receiverLocations, pistonAperture, sourceFrequency=14_000, userSamples=700):
         '''
         Generates a factor to scale response by flat plate response
 
         Inputs:
         sourceLocation: The location in world space of the acoustic source.
+        sourceAngle: Angle the acoustic source is at
         recieverLocations: The locations in world space of the recievers. Must be an array of (x,y) coordinates.
+        pistonAperture: The aperture size of the baffled piston approximation
         sourceFrequency: The frequency of the source acoustic wave
         userSampleDensity: The density of samples in the simulated scatter. Relates to resolution rather than sampling rate. 
         '''
@@ -27,21 +34,41 @@ class AcousticParameterMCMC:
         def zero(x):
             return 0*x
 
-        flat = Directed2DVectorised(sourceLocation,receiverLocations,zero,sourceFrequency,0.02,np.pi/3,'simp',userMinMax=[-5,5],userSamples=userSamples,absolute=False)
+        flat = Directed2DVectorised(sourceLocation,receiverLocations,zero,sourceFrequency,pistonAperture,sourceAngle,'simp',userMinMax=[-5,5],userSamples=userSamples,absolute=False)
         flatscatter = flat.Scatter(absolute=True,norm=False)
         return flatscatter.max().copy()
+    
+    def LoadCSVData(path):
+        '''
+        Loads data from CSV and formats it to work with the symbolic math cosine sum functions
 
-    def __init__(self, cosineCount, sourceLocation, receiverLocations, truescatter, userSampleDensity=700, sourceFrequency=14_000, beta=3, wl_scale=[0.1, 1.0]):
+        Inputs:
+        path: The path to the data
+        '''
+        posterior_samples = np.loadtxt(path, delimiter=",")
+    
+        # Convert each row into 3-element tuples for better multi
+        return [list(zip(*row.reshape(-1, 3).T)) for row in posterior_samples]
+    
+    def generateFactor(self):
+        '''
+        Generates a factor to scale response by flat plate response
+        '''
+        return AcousticParameterMCMC.GenerateFactor(self.sourceLocation, self.sourceAngle, self.receiverLocations, self.pistonAperture, self.sourceFrequency, self.userSampleDensity)
+
+    def __init__(self, cosineCount, sourceLocation, sourceAngle, receiverLocations, truescatter, userSampleDensity=700, sourceFrequency=14_000, pistonAperture=0.02):
         '''
         Init function for the AcousticParameterMCMC class
 
         Inputs:
         cosineCount: Number of surface parameters to recover (Amplitude, Wavelength, Phase tuple). Must be a multiple of 3.
         sourceLocation: The location in world space of the acoustic source.
+        sourceAngle: Angle the acoustic source is at
         recieverLocations: The locations in world space of the recievers. Must be an array of (x,y) coordinates.
         truescatter: The true scatter data that the chain compares response to. Must be amplitude only data for each reciever location.
         userSampleDensity: The density of samples in the simulated scatter. Relates to resolution rather than sampling rate.
         sourceFrequency: The frequency of the source acoustic wave
+        pistonAperture: The aperture size of the baffled piston approximation
         '''
 
         self.cosineCount = cosineCount
@@ -50,10 +77,10 @@ class AcousticParameterMCMC:
         self.sourceFrequency = sourceFrequency
         self.userSampleDensity = userSampleDensity
         self.trueScatter = truescatter
-        self.beta = beta
-        self.wl_scale = wl_scale
+        self.pistonAperture = pistonAperture
+        self.sourceAngle = sourceAngle
 
-    def run(self, surfaceFunction=None, kernel="NUTS", burnInCount=2000, sampleCount=5000, chainCount=4, targetAccRate=0.238, scaleTrueScatter=True):
+    def run(self, surfaceFunction=None, kernel="NUTS", burnInCount=2000, sampleCount=5000, chainCount=4, targetAccRate=0.238, scaleTrueScatter=True, showGraph=False):
         '''
         Runs the pymc model with the selected kernel. Stores the parameters and trace afterwards.
         Also outputs the parameters as a .csv with the file name "kernel + .csv"
@@ -66,43 +93,44 @@ class AcousticParameterMCMC:
         chainCount: The number of parallel chains to run. Useful for getting diagnostics.
         tragetAccRate: The target acceptance rate.
         scaleTrueScatter: Sets whether to scale the true scatter by the flat plate response.
+        showGraph: Shows and saves an image of the model graph
         '''
 
         # Raises memory usage but should be more efficient
         pytensor.config.allow_gc=False
 
+        # Generate the factor to scale by the flat plate response
         factor = 1.0
         if scaleTrueScatter:
-            factor = AcousticParameterMCMC.GenerateFactor(self.sourceLocation, self.receiverLocations, self.sourceFrequency, self.userSampleDensity)
+            factor = self.generateFactor()
 
+        if self._wavelengths.any():
+            self.runWithWavelengths(surfaceFunction, kernel, burnInCount, sampleCount, chainCount, targetAccRate, factor, showGraph)
+        else:
+            self.runWithFull(surfaceFunction, kernel, burnInCount, sampleCount, chainCount, targetAccRate, factor, showGraph)  
+
+    def runWithFull(self, surfaceFunction=None, kernel="NUTS", burnInCount=2000, sampleCount=5000, chainCount=4, targetAccRate=0.238, factor=1.0, showGraph=False):
+        # Normalize the scatter to the flat plate response
         factorizedScatter = self.trueScatter/factor
         factorizedScatter = factorizedScatter
 
+        # Set the number of waves to reconstruct
         if self.cosineCount == 0:
             raise Exception("Cannot have a surface with no parameters!")
-        
         N = self.cosineCount
 
-        # Generate the wavelength distributions
-        # Special case for N = 1 is just the first element
-        wl_means = pt.as_tensor_variable([self.wl_scale[0]])
-        wl_sds = wl_means**1.1
-
-        if N != 1:
-            wl_means = pt.as_tensor_variable(np.logspace(np.log(self.wl_scale[0]), np.log(self.wl_scale[1]), N))
-            wl_sds = wl_means**1.1
-
+        # Set the prior distributions
+        ampSigmas = self.getAmplitudeProposal()
+        phaseSigmas = self.getPhaseProposal()
+        wlSigmas = self.getWavelengthProposal()
         with pm.Model() as model:
 
-            # Priors for each set of 3 params       
-            # Amplitudes depend on wavelengths                        
-            wavelengths = pm.TruncatedNormal('wl', mu=wl_means, sigma=wl_sds, lower=1e-8, upper=0.4, shape=(N,))   
-            phases = pm.TruncatedNormal('phase', mu=0.0, sigma=1.0, lower=-1.0, upper=1.0, shape=(N,))
+            # Proposal for each set of 3 params                  
+            wavelengths = pm.TruncatedNormal('wl', sigma=wlSigmas, lower=0.0, upper=1.0, shape=(N,), initval=pt.zeros(N))
+            amplitudes = pm.TruncatedNormal('amp', sigma=ampSigmas, lower=0.0, upper=0.025, shape=(N,), initval=1e-10 + pt.zeros(N))
+            phases = pm.TruncatedNormal('phase', mu=0.5, sigma=phaseSigmas, lower=0.0, upper=0.999, shape=(N,), initval=1e-10 + pt.zeros(N))
 
-            amp_means, amp_sds = self._amplitudePowerLaw(wavelengths)
-            amplitudes = pm.TruncatedNormal('amp', mu=amp_means, sigma=amp_sds, lower=1e-8, upper=0.025, shape=(N,))
-
-            epsilon= 0.05  #Scales the error covariance matrix for the error between receivers
+            error = 0.0075  #Scales the error covariance matrix for the error and noise between receivers
 
             # Surface function with evaluated parameters (if you need it before sampling)rt
             def newFunction(x):
@@ -115,8 +143,8 @@ class AcousticParameterMCMC:
                 self.receiverLocations,
                 newFunction,
                 self.sourceFrequency,
-                0.02,
-                np.pi / 3,
+                self.pistonAperture,
+                self.sourceAngle,
                 userMinMax=[-1,1],
                 userSamples=self.userSampleDensity,
                 absolute=False
@@ -126,67 +154,182 @@ class AcousticParameterMCMC:
             KA_Object.surfaceChecker() #Adds pm.Potential penalty if kirchoff criteria not met
 
             # Likelihood: Compare predicted response to observed data
-            likelihood = pm.MvNormal('obs', mu=scatter, cov=np.eye(len(factorizedScatter))*epsilon, observed=factorizedScatter)
+            likelihood = pm.MvNormal('obs', mu=scatter, cov=np.eye(len(factorizedScatter))*error, observed=factorizedScatter)
 
         # View model graph
-        #graph = pm.model_to_graphviz(model)
-        #graph.render("model_graph", format="png", view=True)  # Saves and opens the file
+        if showGraph:
+            graph = pm.model_to_graphviz(model)
+            graph.render("model_graph", format="png", view=True)
 
         trace = []
-        posterior_samples = []
-        if kernel == "metropolis-hastings":
+        if kernel == "NUTS":
             with model:
-                # Define the Metropolis sampler
-                step = pm.Metropolis(tune=True)
-
-            with model:
-                # Sample from the posterior
-                trace = pm.sample(tune=burnInCount, draws=sampleCount, step=step, chains=chainCount, return_inferencedata=True)
-        elif kernel == "NUTS":
-            with model:
-                # Define the NUTS sampler
                 step = pm.NUTS(target_accept=targetAccRate)
-
-            with model:
-                # Sample from the posterior
                 trace = pm.sample(tune=burnInCount, draws=sampleCount, step=step, chains=chainCount, return_inferencedata=True, nuts_sampler="numpyro")
         else:
             raise Exception("Unrecognised kernel name!")
         
-        # pymc statistics
-        #model.profile(model.logp()).summary()
-        #model.profile(pm.gradient(model.logp(), vars=None)).summary()
+        total_samples = chainCount*sampleCount
+        self._writeData(kernel, trace, total_samples, N)
 
+    def runWithWavelengths(self, surfaceFunction=None, kernel="NUTS", burnInCount=2000, sampleCount=5000, chainCount=4, targetAccRate=0.238, factor=1.0, showGraph=False):
+        # Normalize the scatter by the flat plate response
+        factorizedScatter = self.trueScatter/factor
+        factorizedScatter = factorizedScatter
+
+        # Set the number of waves to reconstruct
+        if self.cosineCount == 0:
+            raise Exception("Cannot have a surface with no parameters!")
+        N = self.cosineCount
+
+        # Set the prior distributions
+        ampSigmas = self.getAmplitudeProposal()
+        phaseSigmas = self.getPhaseProposal()
+        with pm.Model() as model:
+
+            # Proposal for each set of 2 params                  
+            amplitudes = pm.TruncatedNormal('amp', sigma=ampSigmas, lower=0.0, upper=0.025, shape=(N,), initval=1e-10 + pt.zeros(N))
+            phases = pm.TruncatedNormal('phase', mu=0.5, sigma=phaseSigmas, lower=0.0, upper=0.999, shape=(N,), initval=1e-10 + pt.zeros(N))
+
+            # Use known range of wavelengths
+            wavelengths = pm.Data('wl', self._wavelengths)
+            error = 0.0075  #Scales the error covariance matrix for the error and noise between receivers
+
+            # Surface function with evaluated parameters
+            def newFunction(x):
+                return surfaceFunction(pt.as_tensor_variable(x), amplitudes, wavelengths, phases)
+
+            # Scatter operation which maintains symbolic links
+            # Gives the same results as Directed2DVectorized class
+            KA_Object = Directed2DVectorisedSymbolic(
+                self.sourceLocation,
+                self.receiverLocations,
+                newFunction,
+                self.sourceFrequency,
+                self.pistonAperture,
+                self.sourceAngle,
+                userMinMax=[-1,1],
+                userSamples=self.userSampleDensity,
+                absolute=False
+            )
+            scatter = KA_Object.Scatter(absolute=True, norm=False)
+            scatter = scatter / factor
+            KA_Object.surfaceChecker() #Adds pm.Potential penalty if kirchoff criteria not met
+
+            # Likelihood: Compare predicted response to observed data
+            likelihood = pm.MvNormal('obs', mu=scatter, cov=np.eye(len(factorizedScatter))*error, observed=factorizedScatter)
+
+        # View model graph
+        if showGraph:
+            graph = pm.model_to_graphviz(model)
+            graph.render("model_graph", format="png", view=True)
+
+        trace = []
+        if kernel == "NUTS":
+            with model:
+                step = pm.NUTS(target_accept=targetAccRate)
+                trace = pm.sample(tune=burnInCount, draws=sampleCount, step=step, chains=chainCount, return_inferencedata=True, nuts_sampler="numpyro")
+        else:
+            raise Exception("Unrecognised kernel name!")
+
+        total_samples = chainCount*sampleCount
+        self._writeData(kernel, trace, total_samples, N)      
+
+    def setAmplitudeProposal(self, stds):
+        '''
+        Set the standard deviation of the amplitude proposal distributions
+
+        Inputs:
+        stds: An array of standard deviations. Must have cosineCount members
+        '''
+        assert self.cosineCount == len(stds)
+        self._amplitudeProposal = stds
+
+    def getAmplitudeProposal(self):
+        ampSigmas = []
+        if self._amplitudeProposal != None:
+            ampSigmas = self._amplitudeProposal
+        else:
+            ampSigmas = 0.003 + np.zeros(self.cosineCount)
+        return ampSigmas
+
+    def setPhaseProposal(self, stds):
+        '''
+        Set the standard deviation of the phase proposal distributions
+
+        Inputs:
+        stds: An array of standard deviations. Must have cosineCount members
+        '''
+        # Make sure phase is already 2*pi scaled
+        assert self.cosineCount == len(stds)
+        self._phaseProposal = stds
+
+    def getPhaseProposal(self):
+        phaseSigmas = []
+        if self._phaseProposal != None:
+            phaseSigmas = self._phaseProposal
+        else:
+            phaseSigmas = 0.1 + np.zeros(self.cosineCount)
+        return phaseSigmas
+    
+    def setWavelengthProposal(self, stds):
+        '''
+        Set the standard deviation of the wavelength proposal distributions. Will clear wavelength data if set.
+
+        Inputs:
+        stds: An array of standard deviations. Must have cosineCount members
+        '''
+        # Make sure phase is already 2*pi scaled
+        assert self.cosineCount == len(stds)
+        self._wavelengthProposal = stds
+        self._wavelengths = None
+
+    def getWavelengthProposal(self):
+        assert self._wavelengths == None
+
+        wlSigmas = []
+        if self._wavelengthProposal != None:
+            wlSigmas = self._wavelengthProposal
+        else:
+            wlSigmas = 0.08 + np.zeros(self.cosineCount)
+        return wlSigmas
+
+    def setWavelengths(self, wavelengths):
+        '''
+        Set the known wavelengths to reduce complexity. Will clear wavelength proposal data if set
+
+        Inputs:
+        wavelengths: An array of known wavelengths. Must have cosineCount members
+        '''
+        assert self.cosineCount == len(wavelengths)
+        self._wavelengths = wavelengths
+        self._wavelengthProposal = None
+ 
+    def _writeData(self, kernel, trace, totalSamples, N):
         # Flatten arrays with some numpy shaping trickery
         # Gives us columns so that each set of 3 params are next to each other
-        total_samples = chainCount*sampleCount
-
+        posterior_samples = []
         posterior = trace.posterior
-        amps = posterior['amp'].values.transpose(2, 0, 1).reshape(N, total_samples)
-        wls = posterior['wl'].values.transpose(2, 0, 1).reshape(N, total_samples)
-        phases = posterior['phase'].values.transpose(2, 0, 1).reshape(N, total_samples)
+        amps = posterior['amp'].values.transpose(2, 0, 1).reshape(N, totalSamples)
+
+        wls = []
+        if (self._wavelengths.any()):
+            wls = np.tile(np.array(self._wavelengths), (totalSamples, 1)).T
+        else:
+            wls = posterior['wl'].values.transpose(2, 0, 1).reshape(N, totalSamples)
+        phases = posterior['phase'].values.transpose(2, 0, 1).reshape(N, totalSamples)
 
         posterior_samples = np.row_stack((amps,wls,phases)).T
-        posterior_samples = posterior_samples.reshape(total_samples, 3, N).transpose(0, 2, 1)
-        posterior_samples = posterior_samples.reshape(total_samples, N*3)
+        posterior_samples = posterior_samples.reshape(totalSamples, 3, N).transpose(0, 2, 1)
+        posterior_samples = posterior_samples.reshape(totalSamples, N*3)
 
         # Save to csv with header
         np.savetxt("results/" + kernel + ".csv", posterior_samples, delimiter=",", header=self._generateHeader(), fmt="%s")
-
         print("MCMC Results saved!")
 
         # Save parameter store
         self.posteriorSamples = posterior_samples
         self.trace = trace
-
-    def _amplitudePowerLaw(self, wavelengths):
-        '''
-        Calculates the amplitude distributions assuming follows a wavelength power law
-        '''
-        wavenumbers = pt.abs((2.0*pt.pi)/wavelengths)
-        amps_means = wavenumbers**(-self.beta/2.0)
-        amps_sds = amps_means**1.1
-        return amps_means, amps_sds
 
     def _generateHeader(self):
         header_string = ""
@@ -201,4 +344,4 @@ class AcousticParameterMCMC:
         '''
 
         print(az.summary(self.trace))
-        az.plot_trace(self.trace)
+        az.plot_trace(self.trace, combined=False)

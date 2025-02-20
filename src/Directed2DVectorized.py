@@ -275,7 +275,7 @@ class Directed2DVectorisedSymbolic:
         self.curvature = (numerator**1.5)/np.abs((denominator))
         self.condition = 1/((self.k*self.curvature)**0.333333333)
 
-        surf_constraint = self.condition.max() > 1
+        surf_constraint = self.condition.max() <= 1
         potential = pm.Potential("kirchoff_criteria", pm.math.log(pm.math.switch(surf_constraint, 1, self._potential_func(self.condition.max()))))
 
     def __Integrand(self):

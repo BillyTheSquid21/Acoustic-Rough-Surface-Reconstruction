@@ -52,10 +52,27 @@ def SymRandomSurface(beta, x, t, velocity, depth, lM, lm, aw = 1e-3):
   total = (np.real(total)/np.std(total)*aw)
   return total
 
+def SymCosineSurfaceM(x, amp, wl, p):
+    # Is equal to Amp*Cos(2*pi*(x/WL + phase))
+    # Add a tiny offset to wavelength as otherwise could div by 0!
+    return amp*np.cos((2*np.pi*((x/(wl+1e-10)) + p)))
+
+def SymCosineSumSurfaceM(x, amps, wls, ps):
+    surface = np.zeros(x.shape)
+    for i in range(0, len(amps)):
+        surface += SymCosineSurfaceM(x,amps[i], wls[i], ps[i])
+    return surface
+
 def SymCosineSurface(x, params):
     # Is equal to Amp*Cos(2*pi*(x/WL + phase))
     # Add a tiny offset to wavelength as otherwise could div by 0!
     return params[0]*np.cos((2*np.pi*((x/(params[1]+1e-10)) + params[2])))
+
+def SymCosineSumSurface(x, params_array):
+    surface = np.zeros(x.shape)
+    for p in params_array:
+        surface += SymCosineSurface(x,p)
+    return surface
 
 def SymCosineSumSurface(x, params_array):
     surface = np.zeros(x.shape)
