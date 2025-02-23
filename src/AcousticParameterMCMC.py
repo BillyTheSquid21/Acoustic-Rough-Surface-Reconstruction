@@ -120,7 +120,7 @@ class AcousticParameterMCMC:
         if scaleTrueScatter:
             factor = self.generateFactor()
 
-        if self._wavelengths.any():
+        if self._wavelengths is not None:
             self.runWithWavelengths(surfaceFunction, kernel, burnInCount, sampleCount, chainCount, targetAccRate, factor, showGraph)
         else:
             self.runWithFull(surfaceFunction, kernel, burnInCount, sampleCount, chainCount, targetAccRate, factor, showGraph)  
@@ -142,13 +142,13 @@ class AcousticParameterMCMC:
         with pm.Model() as model:
 
             # Proposal for each set of 3 params                  
-            wavelengths = pm.TruncatedNormal('wl', sigma=wlSigmas, lower=0.0, upper=1.0, shape=(N,), initval=pt.zeros(N))
-            amplitudes = pm.TruncatedNormal('amp', sigma=ampSigmas, lower=0.0, upper=0.025, shape=(N,), initval=1e-10 + pt.zeros(N))
-            phases = pm.TruncatedNormal('phase', mu=0.5, sigma=phaseSigmas, lower=0.0, upper=0.999, shape=(N,), initval=1e-10 + pt.zeros(N))
+            wavelengths = pm.TruncatedNormal('wl', sigma=wlSigmas, lower=0.0, upper=1.0, shape=(N,))
+            amplitudes = pm.TruncatedNormal('amp', sigma=ampSigmas, lower=0.0, upper=0.025, shape=(N,))
+            phases = pm.Uniform('phase', lower=-0.5, upper=0.5, shape=(N,), initval=pt.zeros(shape=(N,)))
 
             error = 0.0075  #Scales the error covariance matrix for the error and noise between receivers
 
-            # Surface function with evaluated parameters (if you need it before sampling)rt
+            # Surface function with evaluated parameters
             def newFunction(x):
                 return surfaceFunction(pt.as_tensor_variable(x), amplitudes, wavelengths, phases)
 
@@ -263,7 +263,7 @@ class AcousticParameterMCMC:
 
     def getAmplitudeProposal(self):
         ampSigmas = []
-        if self._amplitudeProposal != None:
+        if self._amplitudeProposal is not None:
             ampSigmas = self._amplitudeProposal
         else:
             ampSigmas = 0.003 + np.zeros(self.cosineCount)
@@ -282,7 +282,7 @@ class AcousticParameterMCMC:
 
     def getPhaseProposal(self):
         phaseSigmas = []
-        if self._phaseProposal != None:
+        if self._phaseProposal is not None:
             phaseSigmas = self._phaseProposal
         else:
             phaseSigmas = 0.1 + np.zeros(self.cosineCount)
@@ -304,7 +304,7 @@ class AcousticParameterMCMC:
         assert self._wavelengths == None
 
         wlSigmas = []
-        if self._wavelengthProposal != None:
+        if self._wavelengthProposal is not None:
             wlSigmas = self._wavelengthProposal
         else:
             wlSigmas = 0.08 + np.zeros(self.cosineCount)
@@ -329,7 +329,7 @@ class AcousticParameterMCMC:
         amps = posterior['amp'].values.transpose(2, 0, 1).reshape(N, totalSamples)
 
         wls = []
-        if (self._wavelengths.any()):
+        if self._wavelengths is not None:
             wls = np.tile(np.array(self._wavelengths), (totalSamples, 1)).T
         else:
             wls = posterior['wl'].values.transpose(2, 0, 1).reshape(N, totalSamples)
