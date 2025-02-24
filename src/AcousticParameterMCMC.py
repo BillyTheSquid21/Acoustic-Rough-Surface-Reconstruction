@@ -143,8 +143,8 @@ class AcousticParameterMCMC:
 
             # Proposal for each set of 3 params                  
             wavelengths = pm.TruncatedNormal('wl', sigma=wlSigmas, lower=0.0, upper=1.0, shape=(N,))
-            amplitudes = pm.TruncatedNormal('amp', sigma=ampSigmas, lower=0.0, upper=0.025, shape=(N,))
-            phases = pm.Uniform('phase', lower=-0.5, upper=0.5, shape=(N,), initval=pt.zeros(shape=(N,)))
+            amplitudes = pm.TruncatedNormal('amp', sigma=ampSigmas, lower=0.0, upper=0.025, shape=(N,), initval=1e-6 + pt.zeros(shape=(N,)))
+            phases = pm.TruncatedNormal('phase', mu=0.0, sigma=0.25, lower=-0.5, upper=0.5, shape=(N,), initval=pt.zeros(shape=(N,)))
 
             error = 0.0075  #Scales the error covariance matrix for the error and noise between receivers
 

@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import jax
 import arviz as az
 import corner
+import scienceplots
 
 from src.Directed2DVectorized import Directed2DVectorised
 from src.AcousticParameterMCMC import AcousticParameterMCMC
@@ -12,6 +13,8 @@ from src.SymbolicMath import SymCosineSumSurface as SurfaceFunctionMulti
 from src.SymbolicMath import SymRandomSurface
 
 def modelRun():
+    plt.style.use('science')
+    plt.rcParams["font.family"] = "Bitstream Charter"
 
     # Check jax backend
     print("jax device: ", jax.default_backend(), " ", jax.device_count())
@@ -88,8 +91,8 @@ def modelRun():
     # True params
     p = [0.0015, 0.05, 0.0]
 
-    sample_count = 50_000
-    burn_in_count = 100_000
+    sample_count = 25_000
+    burn_in_count = 25_000
     run_model = True
     kernel = "NUTS"
     userSamples = 700
@@ -103,7 +106,7 @@ def modelRun():
                                      userSampleDensity=userSamples, 
                                      sourceFrequency=sourceFreq)
         
-        mcmc.setAmplitudeProposal([0.075])
+        mcmc.setAmplitudeProposal([0.1])
         mcmc.setPhaseProposal([0.01])
         mcmc.setWavelengthProposal([0.08])
         
