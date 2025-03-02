@@ -8,6 +8,7 @@ import pytensor.tensor as pt
 
 from src.Directed2DVectorized import Directed2DVectorised
 from src.Directed2DVectorized import Directed2DVectorisedSymbolic
+from src.SymbolicMath import SymAngularMean
 
 class AcousticParameterMCMC:
     '''
@@ -15,9 +16,9 @@ class AcousticParameterMCMC:
     '''
 
     _amplitudeProposal = None
-    _phaseProposal = None
     _wavelengthProposal = None
     _wavelengths = None
+    _phaseScale = 1.0 / (2.0 * np.pi)
 
     def GenerateFactor(sourceLocation, sourceAngle, receiverLocations, pistonAperture, sourceFrequency=14_000, userSamples=700):
         '''
@@ -62,6 +63,25 @@ class AcousticParameterMCMC:
     
         # Convert each row into 3-element tuples for better multi
         return [list(zip(*row.reshape(-1, 3).T)) for row in posterior_samples]
+    
+    def AngularMeanData(posterior_samples, cosine_count):
+        '''
+        For a loaded csv data, will make the phase the angular mean for all samples
+
+        Inputs:
+        posterior_samples: The samples to get the angular mean for
+        cosine_count: The number of waves to calculate for
+
+        Returns:
+        The samples with the angular mean
+        '''
+        for j in range(cosine_count):
+            phases = [t[j][2] for t in posterior_samples]
+            mean_angle = SymAngularMean(np.array(phases))
+            for i in range(len(posterior_samples)):
+                t = posterior_samples[i]
+                posterior_samples[i][j] = (t[j][0], t[j][1], mean_angle)
+        return posterior_samples
     
     def generateFactor(self):
         '''
@@ -114,6 +134,7 @@ class AcousticParameterMCMC:
 
         # Raises memory usage but should be more efficient
         pytensor.config.allow_gc=False
+        self._kernel = kernel
 
         # Generate the factor to scale by the flat plate response
         factor = 1.0
@@ -137,20 +158,28 @@ class AcousticParameterMCMC:
 
         # Set the prior distributions
         ampSigmas = self.getAmplitudeProposal()
-        phaseSigmas = self.getPhaseProposal()
         wlSigmas = self.getWavelengthProposal()
+
+        # As are all centered at zero, dividing by standard deviation means both can be put on same scale
+        self._ampScale = ampSigmas
+        self._wavelengthScale = wlSigmas
+        phase_init_vals = np.linspace(1e-10, 2.0*np.pi, N+1)[:N]
+        cov_matrix = np.eye(len(factorizedScatter)) * 0.001
+        chol = np.linalg.cholesky(cov_matrix)
         with pm.Model() as model:
 
             # Proposal for each set of 3 params                  
-            wavelengths = pm.TruncatedNormal('wl', sigma=wlSigmas, lower=0.0, upper=1.0, shape=(N,))
-            amplitudes = pm.TruncatedNormal('amp', sigma=ampSigmas, lower=0.0, upper=0.025, shape=(N,), initval=1e-6 + pt.zeros(shape=(N,)))
-            phases = pm.TruncatedNormal('phase', mu=0.0, sigma=0.25, lower=-0.5, upper=0.5, shape=(N,), initval=pt.zeros(shape=(N,)))
-
-            error = 0.0075  #Scales the error covariance matrix for the error and noise between receivers
+            wavelengths = pm.TruncatedNormal('wl', sigma=1.0, lower=0.0, shape=(N,))
+            amplitudes = pm.TruncatedNormal('amp', sigma=1.0, lower=0.0, shape=(N,), initval=1e-6 + pt.zeros(shape=(N,)))
+            phases = pm.Uniform('phase', lower=0.0, upper=2.0*np.pi, initval=phase_init_vals, shape=(N,))
+            
+            # Prevent label switching when wavelengths are not provided
+            wavelength_penalty = pt.sum(pt.switch(pt.ge(wavelengths[:-1], wavelengths[1:]), 0, 1e6))
+            pm.Potential("order-penalty", wavelength_penalty)
 
             # Surface function with evaluated parameters
             def newFunction(x):
-                return surfaceFunction(pt.as_tensor_variable(x), amplitudes, wavelengths, phases)
+                return surfaceFunction(pt.as_tensor_variable(x), amplitudes*self._ampScale, wavelengths*self._wavelengthScale, phases*self._phaseScale)
 
             # Scatter operation which maintains symbolic links
             # Gives the same results as Directed2DVectorized class
@@ -170,7 +199,7 @@ class AcousticParameterMCMC:
             KA_Object.surfaceChecker() #Adds pm.Potential penalty if kirchoff criteria not met
 
             # Likelihood: Compare predicted response to observed data
-            likelihood = pm.MvNormal('obs', mu=scatter, cov=np.eye(len(factorizedScatter))*error, observed=factorizedScatter)
+            likelihood = pm.MvNormal('obs', mu=scatter, chol=chol, observed=factorizedScatter)
 
         # View model graph
         if showGraph:
@@ -200,20 +229,27 @@ class AcousticParameterMCMC:
 
         # Set the prior distributions
         ampSigmas = self.getAmplitudeProposal()
-        phaseSigmas = self.getPhaseProposal()
+        self._ampScale = ampSigmas
+
+        # Phases start spread out to avoid amplitudes bunching at 0
+        phase_init_vals = np.linspace(1e-10, 2.0*np.pi, N+1)[:N]
+
+        # Create the covariance matrix
+        cov_matrix = np.eye(len(factorizedScatter)) * 0.001
+        chol = np.linalg.cholesky(cov_matrix)
         with pm.Model() as model:
 
-            # Proposal for each set of 2 params                  
-            amplitudes = pm.TruncatedNormal('amp', sigma=ampSigmas, lower=0.0, upper=0.025, shape=(N,), initval=1e-10 + pt.zeros(N))
-            phases = pm.TruncatedNormal('phase', mu=0.5, sigma=phaseSigmas, lower=0.0, upper=0.999, shape=(N,), initval=1e-10 + pt.zeros(N))
+            # Proposal for each set of 2 params     
+            # For phase initialize to even spacing for each wave             
+            amplitudes = pm.TruncatedNormal('amp', sigma=1.0, lower=0.0, shape=(N,), initval=1e-10 + pt.zeros(N))
+            phases = pm.Uniform('phase', lower=0.0, upper=2.0*np.pi, initval=phase_init_vals, shape=(N,))
 
             # Use known range of wavelengths
             wavelengths = pm.Data('wl', self._wavelengths)
-            error = 0.0075  #Scales the error covariance matrix for the error and noise between receivers
 
             # Surface function with evaluated parameters
             def newFunction(x):
-                return surfaceFunction(pt.as_tensor_variable(x), amplitudes, wavelengths, phases)
+                return surfaceFunction(pt.as_tensor_variable(x), amplitudes*self._ampScale, wavelengths, phases*self._phaseScale)
 
             # Scatter operation which maintains symbolic links
             # Gives the same results as Directed2DVectorized class
@@ -233,7 +269,7 @@ class AcousticParameterMCMC:
             KA_Object.surfaceChecker() #Adds pm.Potential penalty if kirchoff criteria not met
 
             # Likelihood: Compare predicted response to observed data
-            likelihood = pm.MvNormal('obs', mu=scatter, cov=np.eye(len(factorizedScatter))*error, observed=factorizedScatter)
+            likelihood = pm.MvNormal('obs', mu=scatter, chol=chol, observed=factorizedScatter)
 
         # View model graph
         if showGraph:
@@ -245,6 +281,10 @@ class AcousticParameterMCMC:
             with model:
                 step = pm.NUTS(target_accept=targetAccRate)
                 trace = pm.sample(tune=burnInCount, draws=sampleCount, step=step, chains=chainCount, return_inferencedata=True, nuts_sampler="numpyro")
+        elif kernel == "ADVI":
+            with model:
+                advi_fit = pm.fit(n=burnInCount, method="advi")
+                trace = advi_fit.sample(sampleCount)
         else:
             raise Exception("Unrecognised kernel name!")
 
@@ -326,14 +366,14 @@ class AcousticParameterMCMC:
         # Gives us columns so that each set of 3 params are next to each other
         posterior_samples = []
         posterior = trace.posterior
-        amps = posterior['amp'].values.transpose(2, 0, 1).reshape(N, totalSamples)
+        amps = posterior['amp'].values.transpose(2, 0, 1).reshape(N, totalSamples) * np.array(self._ampScale).reshape(-1, 1)
 
         wls = []
         if self._wavelengths is not None:
             wls = np.tile(np.array(self._wavelengths), (totalSamples, 1)).T
         else:
-            wls = posterior['wl'].values.transpose(2, 0, 1).reshape(N, totalSamples)
-        phases = posterior['phase'].values.transpose(2, 0, 1).reshape(N, totalSamples)
+            wls = posterior['wl'].values.transpose(2, 0, 1).reshape(N, totalSamples) * np.array(self._wavelengthScale).reshape(-1, 1)
+        phases = posterior['phase'].values.transpose(2, 0, 1).reshape(N, totalSamples) * np.array(self._phaseScale).reshape(-1, 1)
 
         posterior_samples = np.row_stack((amps,wls,phases)).T
         posterior_samples = posterior_samples.reshape(totalSamples, 3, N).transpose(0, 2, 1)
@@ -358,6 +398,43 @@ class AcousticParameterMCMC:
         '''
         Plots the trace of the model with arviz
         '''
+        import matplotlib.pyplot as plt
 
-        print(az.summary(self.trace))
-        az.plot_trace(self.trace, combined=False)
+        az.rcParams['plot.max_subplots'] = 40
+        summary = az.summary(self.trace, circ_var_names=["phase"])
+        print(summary)
+
+        with open("results/output.txt", "w") as txt:
+            txt.write(summary.to_string())
+
+        az.plot_energy(self.trace)
+
+        # Rescale the trace values and deviations
+        scaled_trace = self.trace.copy()
+
+        # Phase
+        scaled_trace.posterior["phase"] = self.trace.posterior["phase"] #* self._phaseScale # Keep as pi scale for now
+        az.plot_trace(scaled_trace, var_names=["phase"], divergences=False, compact=False, combined=False)
+        fig = plt.gcf()
+        fig.tight_layout()
+        fig.subplots_adjust(hspace=0.5, wspace=0.3)
+        plt.savefig("results/" + self._kernel.lower() + "-phase-pymc-trace.png")
+
+        # Amp
+        scaled_trace.posterior["amp"] = self.trace.posterior["amp"] * self._ampScale
+        az.plot_trace(scaled_trace, var_names=["amp"], divergences=False, compact=False, combined=False)
+        fig = plt.gcf()
+        fig.tight_layout()
+        fig.subplots_adjust(hspace=0.5, wspace=0.3)
+        plt.savefig("results/" + self._kernel.lower() + "-amp-pymc-trace.png")
+
+        # Set include vars to ignore internal mu and sigma for phase - these values aren't of interest
+
+        # WL
+        if self._wavelengths is None:
+            scaled_trace.posterior["wl"] = self.trace.posterior["wl"] * self._wavelengthScale
+            az.plot_trace(scaled_trace, var_names=["wl"], divergences=False, compact=False, combined=False)
+            fig = plt.gcf()
+            fig.tight_layout()
+            fig.subplots_adjust(hspace=0.5, wspace=0.3)
+            plt.savefig("results/" + self._kernel.lower() + "-wl-pymc-trace.png")

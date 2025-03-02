@@ -257,7 +257,7 @@ class Directed2DVectorisedSymbolic:
         '''
 
         #A larger falloff factor will result in harsher adherence to the criteria
-        falloff_factor = 50
+        falloff_factor = 75
         return (pt.power(condition_max,(-falloff_factor*condition_max))) + 1e-10
 
     def surfaceChecker(self):

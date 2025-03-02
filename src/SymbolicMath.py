@@ -4,7 +4,26 @@ import pytensor.graph.op
 import pytensor.tensor as pt
 import numpy as np
 
+def SymAngularMean(phases):
+    '''
+    Calculates the angular mean of the phases which accounts for phase wrapping.
+    Described in Johnson et al (2024).
+
+    Parameters:
+        phases: An array of phases for one cosine wave
+
+    Returns:
+        float: The angular mean of the phases, in range [-0.5,0.5]
+    '''
+    adjusted_phases = 2.0*np.pi*phases
+    sin_sum = np.sum(np.sin(adjusted_phases))
+    cos_sum = np.sum(np.cos(adjusted_phases))
+    return np.arctan2(sin_sum, cos_sum)/(2.0*np.pi)
+
 def SymRandomSurface(beta, x, t, velocity, depth, lM, lm, aw = 1e-3):
+  '''
+  Generates a random complex surface that is kirchoff valid
+  '''
   g = 9.81
   surface_tension = 72.75e-03
   density = 998.2
