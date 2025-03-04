@@ -121,9 +121,9 @@ def modelRun():
     # Proposal stds
     amp_stds = np.linspace(1.0*amps_scale, 0.5*amps_scale, cosine_count)
 
-    sample_count = 500_000
+    sample_count = 250_000
     burn_in_count = 50_000
-    run_model = True
+    run_model = False
     kernel = "NUTS"
     userSamples = 700
     if run_model:
@@ -184,13 +184,31 @@ def modelRun():
     mins = []
     maxx = []
     for _ in range(500):
-        vals = az.hdi(np.array(surfs).T[_],hdi_prob=0.68)
+        vals = az.hdi(np.array(surfs).T[_],hdi_prob=0.95)
         mins.append(vals[0])
         maxx.append(vals[1])
 
     plt.figure(figsize = (16,9))
     plt.grid()
-    plt.fill_between(x,mins,maxx,color='grey',alpha=0.5,label='68% Credible interval')
+    plt.fill_between(x,mins,maxx,color='grey',alpha=0.50,label='Credible interval (95)')
+
+    mins = []
+    maxx = []
+    for _ in range(500):
+        vals = az.hdi(np.array(surfs).T[_],hdi_prob=0.68)
+        mins.append(vals[0])
+        maxx.append(vals[1])
+
+    plt.fill_between(x,mins,maxx,color='red',alpha=0.25,label='Credible interval (68)')
+
+    mins = []
+    maxx = []
+    for _ in range(500):
+        vals = az.hdi(np.array(surfs).T[_],hdi_prob=0.50)
+        mins.append(vals[0])
+        maxx.append(vals[1])
+
+    plt.fill_between(x,mins,maxx,color='purple',alpha=0.25,label='Credible interval (50)')
     plt.plot(x,mean_surf, label='Surface formed from the mean of the model surfaces')
     #plt.plot(x,mean,label='Surface formed from the mean of the model parameters')
     plt.plot(x,true,label='True surface')

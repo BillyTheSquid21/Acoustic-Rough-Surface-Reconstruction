@@ -67,7 +67,7 @@ from src.AcousticParameterMCMC import AcousticParameterMCMC
 from src.Directed2DVectorized import Directed2DVectorised
 from src.SymbolicMath import SymCosineSurfaceM
 
-train_count = 500
+train_count = 5000
 params = np.array(AcousticParameterMCMC.LoadCSVData("results/examples/nuts-gpu-solver-100K_IT/GPU_Test.csv")[:train_count]).reshape(train_count, -1)
 print("Loaded previous trace: ", params.shape)
 
@@ -128,11 +128,11 @@ init_b_2 = np.random.randn(n_hidden_2).astype(floatX)
 init_b_out = np.random.randn(cosine_count*3).astype(floatX)
 
 # Initialize shared
-model3_input = pytensor.shared(np.array(X3_train))
-model3_amp_output = pytensor.shared(np.array(Y3_train['amp']))
-model3_wl_output = pytensor.shared(np.array(Y3_train['wl']))
-model3_phase_output = pytensor.shared(np.array(Y3_train['phase']))
-model3_output = pytensor.shared(np.array(Y3_train))
+model3_input = pytensor.shared(np.array(X3_train).astype(floatX))
+model3_amp_output = pytensor.shared(np.array(Y3_train['amp']).astype(floatX))
+model3_wl_output = pytensor.shared(np.array(Y3_train['wl']).astype(floatX))
+model3_phase_output = pytensor.shared(np.array(Y3_train['phase']).astype(floatX))
+model3_output = pytensor.shared(np.array(Y3_train).astype(floatX))
 
 with pm.Model() as neural_network:
     # Weights from input to hidden layer
@@ -170,8 +170,8 @@ with pm.Model() as neural_network:
 
 with neural_network:
     inference = pm.ADVI()
-    approx = pm.fit(n=50000, method=inference)
-    nn_trace = approx.sample(draws=5000)
+    approx = pm.fit(n=100_000, method=inference)
+    nn_trace = approx.sample(draws=50_000)
 
     plt.plot(approx.hist, label="old ADVI", alpha=0.3)
     plt.legend()
@@ -185,15 +185,27 @@ with neural_network:
     #plt.show()
 
 # Replace shared variables with testing set
-model3_input.set_value(np.array(X3_test))
-model3_amp_output = pytensor.shared(np.array(Y3_test['amp']))
-model3_freq_output = pytensor.shared(np.array(Y3_test['wl']))
-model3_phase_output = pytensor.shared(np.array(Y3_test['phase']))
-# Create posterior predictive samples
-ppc_nn = pm.sample_posterior_predictive(nn_trace, model=neural_network)
+# Need to set as shapes change when test and training sets differ in shape
+model3_input.set_value(np.array(X3_test).astype(floatX))
+model3_amp_output.set_value(np.array(Y3_test['amp']).astype(floatX))
+model3_wl_output.set_value(np.array(Y3_test['wl']).astype(floatX))
+model3_phase_output.set_value(np.array(Y3_test['phase']).astype(floatX))
 
-pred_amp = ppc_nn['amp'].mean(axis=0)
-pred_wl = ppc_nn['wl'].mean(axis=0)
-pred_phase = ppc_nn['phase'].mean(axis=0)
+ppc_nn = pm.sample_posterior_predictive(nn_trace, model=neural_network).posterior_predictive
 
-print(pred_amp, " ", pred_wl, " ", pred_phase)
+pred_amp = np.array(ppc_nn['amp']).mean()
+pred_wl = np.array(ppc_nn['wl']).mean()
+pred_phase = np.array(ppc_nn['phase']).mean()
+
+print("AMP: ", pred_amp, " WL: ", pred_wl, " PHASE: ", pred_phase)
+
+# Plot predicted surface
+from src.SymbolicMath import SymCosineSurface
+
+truep = (0.0035, 0.05, 0.0)
+
+x = np.linspace(0, 0.6, 1000)
+plt.plot(x, SymCosineSurface(x, (pred_amp, pred_wl, pred_phase)), label='predicted surface')
+plt.plot(x, SymCosineSurface(x, truep), label='true surface')
+plt.legend()
+plt.show()
