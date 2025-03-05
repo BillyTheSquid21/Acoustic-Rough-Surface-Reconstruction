@@ -103,8 +103,8 @@ def modelRun():
                                      userSampleDensity=userSamples, 
                                      sourceFrequency=sourceFreq)
         
-        mcmc.setAmplitudeProposal(np.array([0.005]))
-        mcmc.setWavelengthProposal(np.array([0.08]))
+        mcmc.setAmplitudeProposal(np.array([0.01]))
+        mcmc.setWavelengthProposal(np.array([0.1]))
         mcmc.setError(0.02)
         
         # Run the model MCMC sampler
