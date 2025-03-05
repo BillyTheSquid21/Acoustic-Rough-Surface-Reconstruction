@@ -19,6 +19,7 @@ class AcousticParameterMCMC:
     _wavelengthProposal = None
     _wavelengths = None
     _phaseScale = 1.0 / (2.0 * np.pi)
+    _error = 0.001
 
     def GenerateFactor(sourceLocation, sourceAngle, receiverLocations, pistonAperture, sourceFrequency=14_000, userSamples=700):
         '''
@@ -149,7 +150,6 @@ class AcousticParameterMCMC:
     def runWithFull(self, surfaceFunction=None, kernel="NUTS", burnInCount=2000, sampleCount=5000, chainCount=4, targetAccRate=0.238, factor=1.0, showGraph=False):
         # Normalize the scatter to the flat plate response
         factorizedScatter = self.trueScatter/factor
-        factorizedScatter = factorizedScatter
 
         # Set the number of waves to reconstruct
         if self.cosineCount == 0:
@@ -160,26 +160,25 @@ class AcousticParameterMCMC:
         ampSigmas = self.getAmplitudeProposal()
         wlSigmas = self.getWavelengthProposal()
 
-        # As are all centered at zero, dividing by standard deviation means both can be put on same scale
-        self._ampScale = ampSigmas
-        self._wavelengthScale = wlSigmas
-        phase_init_vals = np.linspace(1e-10, 2.0*np.pi, N+1)[:N]
-        cov_matrix = np.eye(len(factorizedScatter)) * 0.001
+        phase_init_vals = np.linspace(1e-6, 2.0*np.pi, N+1)[:N]
+        cov_matrix = np.eye(len(factorizedScatter)) * self._error
         chol = np.linalg.cholesky(cov_matrix)
         with pm.Model() as model:
 
-            # Proposal for each set of 3 params                  
-            wavelengths = pm.TruncatedNormal('wl', sigma=1.0, lower=0.0, shape=(N,))
-            amplitudes = pm.TruncatedNormal('amp', sigma=1.0, lower=0.0, shape=(N,), initval=1e-6 + pt.zeros(shape=(N,)))
-            phases = pm.Uniform('phase', lower=0.0, upper=2.0*np.pi, initval=phase_init_vals, shape=(N,))
-            
-            # Prevent label switching when wavelengths are not provided
-            wavelength_penalty = pt.sum(pt.switch(pt.ge(wavelengths[:-1], wavelengths[1:]), 0, 1e6))
-            pm.Potential("order-penalty", wavelength_penalty)
+            # Proposal for each set of 3 params      
+            # Von Mises for now as naturally works for angles but can be slower for more dimensions
+            # I'll deal with that when this bit of code goes there         
+            wavelengths = pm.TruncatedNormal('wl', sigma=wlSigmas, lower=0.0, shape=(N,))
+            amplitudes = pm.TruncatedNormal('amp', sigma=ampSigmas, lower=0.0, shape=(N,), initval=1e-6 + pt.zeros(shape=(N,)))
+            phases = pm.VonMises('phase', mu=0.0, kappa=0.0, initval=phase_init_vals, shape=(N,))
 
             # Surface function with evaluated parameters
             def newFunction(x):
-                return surfaceFunction(pt.as_tensor_variable(x), amplitudes*self._ampScale, wavelengths*self._wavelengthScale, phases*self._phaseScale)
+                return surfaceFunction(pt.as_tensor_variable(x), amplitudes, wavelengths, phases*self._phaseScale)
+
+            # Prevent label switching when wavelengths are not provided
+            wavelength_penalty = pt.sum(pt.switch(pt.ge(wavelengths[:-1], wavelengths[1:]), 0, 1e6))
+            pm.Potential("order-penalty", wavelength_penalty)
 
             # Scatter operation which maintains symbolic links
             # Gives the same results as Directed2DVectorized class
@@ -220,7 +219,6 @@ class AcousticParameterMCMC:
     def runWithWavelengths(self, surfaceFunction=None, kernel="NUTS", burnInCount=2000, sampleCount=5000, chainCount=4, targetAccRate=0.238, factor=1.0, showGraph=False):
         # Normalize the scatter by the flat plate response
         factorizedScatter = self.trueScatter/factor
-        factorizedScatter = factorizedScatter
 
         # Set the number of waves to reconstruct
         if self.cosineCount == 0:
@@ -229,19 +227,18 @@ class AcousticParameterMCMC:
 
         # Set the prior distributions
         ampSigmas = self.getAmplitudeProposal()
-        self._ampScale = ampSigmas
 
         # Phases start spread out to avoid amplitudes bunching at 0
         phase_init_vals = np.linspace(1e-10, 2.0*np.pi, N+1)[:N]
 
         # Create the covariance matrix
-        cov_matrix = np.eye(len(factorizedScatter)) * 0.001
+        cov_matrix = np.eye(len(factorizedScatter)) * self._error
         chol = np.linalg.cholesky(cov_matrix)
         with pm.Model() as model:
 
             # Proposal for each set of 2 params     
             # For phase initialize to even spacing for each wave             
-            amplitudes = pm.TruncatedNormal('amp', sigma=1.0, lower=0.0, shape=(N,), initval=1e-10 + pt.zeros(N))
+            amplitudes = pm.TruncatedNormal('amp', sigma=ampSigmas, lower=0.0, shape=(N,), initval=1e-10 + pt.zeros(N))
             phases = pm.Uniform('phase', lower=0.0, upper=2.0*np.pi, initval=phase_init_vals, shape=(N,))
 
             # Use known range of wavelengths
@@ -249,7 +246,7 @@ class AcousticParameterMCMC:
 
             # Surface function with evaluated parameters
             def newFunction(x):
-                return surfaceFunction(pt.as_tensor_variable(x), amplitudes*self._ampScale, wavelengths, phases*self._phaseScale)
+                return surfaceFunction(pt.as_tensor_variable(x), amplitudes, wavelengths, phases*self._phaseScale)
 
             # Scatter operation which maintains symbolic links
             # Gives the same results as Directed2DVectorized class
@@ -360,19 +357,29 @@ class AcousticParameterMCMC:
         assert self.cosineCount == len(wavelengths)
         self._wavelengths = wavelengths
         self._wavelengthProposal = None
+
+    def setError(self, error):
+        '''
+        Set the error value between receiver values in the covariance matrix
+
+        Inputs:
+        error: The error value to use. Must be greater than zero.
+        '''
+        assert error > 0.0
+        self._error = error
  
     def _writeData(self, kernel, trace, totalSamples, N):
         # Flatten arrays with some numpy shaping trickery
         # Gives us columns so that each set of 3 params are next to each other
         posterior_samples = []
         posterior = trace.posterior
-        amps = posterior['amp'].values.transpose(2, 0, 1).reshape(N, totalSamples) * np.array(self._ampScale).reshape(-1, 1)
+        amps = posterior['amp'].values.transpose(2, 0, 1).reshape(N, totalSamples)
 
         wls = []
         if self._wavelengths is not None:
             wls = np.tile(np.array(self._wavelengths), (totalSamples, 1)).T
         else:
-            wls = posterior['wl'].values.transpose(2, 0, 1).reshape(N, totalSamples) * np.array(self._wavelengthScale).reshape(-1, 1)
+            wls = posterior['wl'].values.transpose(2, 0, 1).reshape(N, totalSamples)
         phases = posterior['phase'].values.transpose(2, 0, 1).reshape(N, totalSamples) * np.array(self._phaseScale).reshape(-1, 1)
 
         posterior_samples = np.row_stack((amps,wls,phases)).T
@@ -413,7 +420,7 @@ class AcousticParameterMCMC:
         scaled_trace = self.trace.copy()
 
         # Phase
-        scaled_trace.posterior["phase"] = self.trace.posterior["phase"] #* self._phaseScale # Keep as pi scale for now
+        scaled_trace.posterior["phase"] = self.trace.posterior["phase"]
         az.plot_trace(scaled_trace, var_names=["phase"], divergences=False, compact=False, combined=False)
         fig = plt.gcf()
         fig.tight_layout()
@@ -421,7 +428,7 @@ class AcousticParameterMCMC:
         plt.savefig("results/" + self._kernel.lower() + "-phase-pymc-trace.png")
 
         # Amp
-        scaled_trace.posterior["amp"] = self.trace.posterior["amp"] * self._ampScale
+        scaled_trace.posterior["amp"] = self.trace.posterior["amp"]
         az.plot_trace(scaled_trace, var_names=["amp"], divergences=False, compact=False, combined=False)
         fig = plt.gcf()
         fig.tight_layout()
@@ -432,7 +439,7 @@ class AcousticParameterMCMC:
 
         # WL
         if self._wavelengths is None:
-            scaled_trace.posterior["wl"] = self.trace.posterior["wl"] * self._wavelengthScale
+            scaled_trace.posterior["wl"] = self.trace.posterior["wl"]
             az.plot_trace(scaled_trace, var_names=["wl"], divergences=False, compact=False, combined=False)
             fig = plt.gcf()
             fig.tight_layout()
