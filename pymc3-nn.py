@@ -6,6 +6,7 @@ import pytensor
 import seaborn as sns
 import pandas as pd
 import pytensor.tensor as pt
+from tqdm import tqdm
 
 from sklearn.model_selection import train_test_split
 
@@ -67,8 +68,16 @@ from src.AcousticParameterMCMC import AcousticParameterMCMC
 from src.Directed2DVectorized import Directed2DVectorised
 from src.SymbolicMath import SymCosineSurfaceM
 
-train_count = 5000
-params = np.array(AcousticParameterMCMC.LoadCSVData("results/examples/nuts-gpu-solver-100K_IT/GPU_Test.csv")[:train_count]).reshape(train_count, -1)
+train_count = 5_000
+sample_count = 100_000 # Hard coded for now
+params_raw = np.array(AcousticParameterMCMC.LoadCSVData("results/examples/nuts-3-param-real-data-110K_IT/NUTS.csv")[:sample_count]).reshape(sample_count, -1)
+
+b = np.random.choice(range(sample_count),train_count)
+params = []
+for i in range(0, train_count):
+    params.append(params_raw[b[i]])
+params = np.array(params)
+
 print("Loaded previous trace: ", params.shape)
 
 factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, SourceAngle, RecLoc, 0.02, 14_000, 700)
@@ -81,9 +90,8 @@ def generate_microphone_pressure(parameters,uSamples=700):
     return scatter/factor   
 
 # Generating responses
-print("Generating responses")
 scatters = []
-for i in range(train_count):
+for i in tqdm (range(train_count), desc="Generating param responses"):
     scatters.append(generate_microphone_pressure(params[i]))
 scatters = np.array(scatters)
 
@@ -91,8 +99,6 @@ training_data = np.concatenate((params, scatters), axis=1)
 print("Combined params and scatter responses: ", training_data.shape)
 
 # Setup training data
-print("Setting up training data")
-
 # Create pandas dataframe (currently hard coded to 3 param recovery! TODO: maybe make more generic)
 # Split into test and training sets
 columns = ['amp', 'wl', 'phase']
@@ -169,17 +175,14 @@ with pm.Model() as neural_network:
     out_phase = pm.Normal('phase', mu=act_out_phase, sigma=sd_phase, observed=model3_phase_output)
 
 with neural_network:
-    inference = pm.ADVI()
-    approx = pm.fit(n=100_000, method=inference)
-    nn_trace = approx.sample(draws=50_000)
+    step = pm.NUTS(target_accept=0.9)
+    nn_trace = pm.sample(draws=2_000, tune=1_000, step=step, chains=1, return_inferencedata=True, nuts_sampler="numpyro")
 
-    plt.plot(approx.hist, label="old ADVI", alpha=0.3)
-    plt.legend()
-    plt.ylabel("ELBO")
-    plt.xlabel("iteration")
+    plt.figure(figsize=(16,9))
+    plt.plot(nn_trace, label="NUTS", alpha=0.3)
     #print(az.summary(nn_trace))
     #az.plot_trace(nn_trace, combined=False)
-    plt.show()
+    #plt.show()
 
     #az.plot_forest(nn_trace)
     #plt.show()
@@ -193,19 +196,28 @@ model3_phase_output.set_value(np.array(Y3_test['phase']).astype(floatX))
 
 ppc_nn = pm.sample_posterior_predictive(nn_trace, model=neural_network).posterior_predictive
 
+from src.SymbolicMath import SymAngularMean
 pred_amp = np.array(ppc_nn['amp']).mean()
 pred_wl = np.array(ppc_nn['wl']).mean()
-pred_phase = np.array(ppc_nn['phase']).mean()
+pred_phase = SymAngularMean(np.array(ppc_nn['phase']))
 
 print("AMP: ", pred_amp, " WL: ", pred_wl, " PHASE: ", pred_phase)
 
 # Plot predicted surface
 from src.SymbolicMath import SymCosineSurface
 
-truep = (0.0035, 0.05, 0.0)
+truep = (0.0015, 0.05, 0.0)
 
 x = np.linspace(0, 0.6, 1000)
-plt.plot(x, SymCosineSurface(x, (pred_amp, pred_wl, pred_phase)), label='predicted surface')
+plt.figure(figsize=(16,9))
+plt.plot(x, SymCosineSurface(x, (pred_amp, pred_wl, pred_phase)), label='mean predicted surface')
 plt.plot(x, SymCosineSurface(x, truep), label='true surface')
 plt.legend()
+plt.show()
+
+import corner
+corner.corner(np.array((np.array(ppc_nn['amp']),np.array(ppc_nn['wl']),np.array(ppc_nn['phase']))),bins=200,
+            quantiles=[0.16, 0.5, 0.84],labels=[r"$\zeta_1$", r"$\zeta_2$", r"$\zeta_3$"],
+            show_titles=True, title_fmt = ".4f")
+plt.savefig("results/nn_corner.png")
 plt.show()
