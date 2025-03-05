@@ -90,7 +90,7 @@ def modelRun():
 
     sample_count = 100_000
     burn_in_count = 10_000
-    run_model = False
+    run_model = True
     kernel = "NUTS"
     userSamples = 700
     if run_model:
