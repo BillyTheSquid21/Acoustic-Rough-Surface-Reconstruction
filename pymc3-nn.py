@@ -134,7 +134,7 @@ if __name__ == "__main__":
     init_b_2 = np.random.randn(n_hidden_2).astype(floatX)
     init_b_out = np.random.randn(cosine_count*1).astype(floatX)
 
-    amp_sd = params.max()
+    amp_sd = 1.0
     print("Amp std: ", amp_sd)
 
     # Initialize shared
@@ -166,7 +166,7 @@ if __name__ == "__main__":
         # Define likelihood
         #out = pm.Multinomial('likelihood', n=1, p=acts_out,
         #                       observed=ann_output)
-        out = pm.Normal('amp', sigma=0.1, mu=acts_out[0], observed=model3_output)
+        out = pm.Normal('amp', sigma=0.02, mu=acts_out[0], observed=model3_output)
 
     run_model = True
     if run_model:
@@ -180,7 +180,7 @@ if __name__ == "__main__":
 
             #approx = inference.fit(n=100_000, callbacks=[tracker])
             step = pm.NUTS(target_accept=0.9)
-            nn_trace = pm.sample(tune=1000, draws=5_000, step=step, chains=1, cores=1, nuts_sampler="numpyro")
+            nn_trace = pm.sample(tune=1_000, draws=5_000, step=step, chains=1, cores=1, nuts_sampler="numpyro")
             nn_trace.to_netcdf("results/nn_trace.nc")
 
             #fig = plt.figure(figsize=(16, 9))
@@ -209,14 +209,9 @@ if __name__ == "__main__":
     ppc_nn = pm.sample_posterior_predictive(nn_trace, var_names=["amp"], model=neural_network)["posterior_predictive"]
 
     from src.SymbolicMath import SymAngularMean
-    pred_index = 10
     amps = np.array(ppc_nn['amp']) * amp_sd
     amps_index = np.array(amps).squeeze()
     pred_amp = amps_index.mean(axis=0)
 
-    plt.scatter(pred_amp, Y3_test)
-    plt.show()
-
-    plt.plot(Y3_test, label="test values")
-    plt.plot(pred_amp, label="predicted values")
+    plt.scatter(np.array(pred_amp), np.array(Y3_test))
     plt.show()
