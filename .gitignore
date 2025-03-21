@@ -1,6 +1,7 @@
 .venv/
 .venv311/
 __pycache__/
+results/large-set/
 results/*.csv
 results/*.png
 results/*.txt

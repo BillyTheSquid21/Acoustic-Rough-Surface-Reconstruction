@@ -88,8 +88,8 @@ def modelRun():
     # True params
     p = [0.0015, 0.05, 0.0]
 
-    sample_count = 100_000
-    burn_in_count = 10_000
+    sample_count = 6_000
+    burn_in_count = 3_000
     run_model = True
     kernel = "NUTS"
     userSamples = 700
@@ -105,7 +105,7 @@ def modelRun():
         
         mcmc.setAmplitudeProposal(np.array([0.01]))
         mcmc.setWavelengthProposal(np.array([0.1]))
-        mcmc.setError(0.02)
+        mcmc.setError(0.025)
         
         # Run the model MCMC sampler
         mcmc.run(kernel=kernel, 

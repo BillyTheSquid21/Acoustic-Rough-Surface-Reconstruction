@@ -20,6 +20,7 @@ class AcousticParameterMCMC:
     _wavelengths = None
     _phaseScale = 1.0 / (2.0 * np.pi)
     _error = 0.001
+    _filename = ""
 
     def GenerateFactor(sourceLocation, sourceAngle, receiverLocations, pistonAperture, sourceFrequency=14_000, userSamples=700):
         '''
@@ -196,7 +197,7 @@ class AcousticParameterMCMC:
             scatter = KA_Object.Scatter(absolute=True, norm=False)
             scatter = scatter / factor
             KA_Object.surfaceChecker() #Adds pm.Potential penalty if kirchoff criteria not met
-
+            
             # Likelihood: Compare predicted response to observed data
             likelihood = pm.MvNormal('obs', mu=scatter, chol=chol, observed=factorizedScatter)
 
@@ -367,6 +368,9 @@ class AcousticParameterMCMC:
         '''
         assert error > 0.0
         self._error = error
+
+    def setFileName(self, name):
+        self._filename = name
  
     def _writeData(self, kernel, trace, totalSamples, N):
         # Flatten arrays with some numpy shaping trickery
@@ -387,7 +391,11 @@ class AcousticParameterMCMC:
         posterior_samples = posterior_samples.reshape(totalSamples, N*3)
 
         # Save to csv with header
-        np.savetxt("results/" + kernel + ".csv", posterior_samples, delimiter=",", header=self._generateHeader(), fmt="%s")
+        filename = self._filename
+        if filename == "":
+            filename = "results/" + kernel
+        filename += ".csv"
+        np.savetxt(filename, posterior_samples, delimiter=",", header=self._generateHeader(), fmt="%s")
         print("MCMC Results saved!")
 
         # Save parameter store
