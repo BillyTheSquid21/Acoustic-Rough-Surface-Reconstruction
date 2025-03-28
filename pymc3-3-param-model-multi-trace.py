@@ -4,6 +4,7 @@ import jax
 import arviz as az
 import corner
 import scienceplots
+import os
 from tqdm import tqdm
 
 from src.Directed2DVectorized import Directed2DVectorised
@@ -20,6 +21,8 @@ def modelRun():
     print("jax device: ", jax.default_backend(), " ", jax.device_count())
 
     cosine_count = 1
+
+    output_folder = "results/forward-model-amp-only"
 
     # Microphone array
     SourceLocation = [-0.20049999999999987,0.21884]
@@ -72,12 +75,12 @@ def modelRun():
 
     SourceAngle = np.pi / 3
     sourceFreq = 14_000
-    sample_count = 6_000
-    burn_in_count = 3_000
+    sample_count = 100_000
+    burn_in_count = 10_000
     userSamples = 700
 
     # Scatter data requirements
-    factor = 1.0
+    factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, SourceAngle, RecLoc, 0.02, sourceFreq)
 
     def generate_microphone_pressure(parameters,uSamples=userSamples):
         def newFunction(x):
@@ -85,44 +88,55 @@ def modelRun():
 
         KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,sourceFreq,0.02,SourceAngle,'simp',userMinMax=[-1,1],userSamples=uSamples,absolute=False)
         scatter = KA_Object.Scatter(absolute=True,norm=False)
-        return scatter/factor  
+        return scatter
 
     # Generate scatter for varying amps and wavelengths
     # Only vary two for now
-    param_spacing = 10
-    ampspace = np.linspace(0.001, 0.01, param_spacing)
-    wlspace  = np.linspace(0.05, 0.1, param_spacing)
+    p_count = 25
 
-    gen_params_set = True
-    if gen_params_set:
+    generate_data = True
+    if generate_data:
         params = []
-        for w in range(param_spacing):
-            for a in range(param_spacing):
-                params.append((ampspace[a], wlspace[w], 0.0))
-
-        params = np.array(params)
-        np.savetxt("results/params.csv", params, delimiter=',')
-
         scatters = []
-        for p in tqdm (params, desc="Generating param responses"):
-            s = generate_microphone_pressure(p)
-            # Add 2.5% noise
-            maxval = np.max(s)
-            s += np.random.normal(scale=0.025*maxval, size=(34,))
+        ampspace = np.random.uniform(0.0, 0.01, p_count)
+        wlspace = np.random.uniform(0.05, 0.05, p_count)
+        for i in range(p_count):
+            params.append((ampspace[i], wlspace[i], 0.0))
+            
+        np.savetxt("results/amp_wl_phase_params_14KHz.csv", params, delimiter=",")
+            
+        for p in tqdm (range(len(params)), desc="Generating param responses with noise"):
+            s = generate_microphone_pressure(params[p])
+            s += np.random.normal(loc=0.0, scale=0.05*factor, size=(34,))
             s = np.abs(s)
             scatters.append(s)
 
+        params = np.array(params)
         scatters = np.array(scatters)
-        np.savetxt("results/scatters.csv", scatters, delimiter=',')
 
-    params = np.loadtxt("results/params.csv", delimiter=',')
-    scatters = np.loadtxt("results/scatters.csv", delimiter=',')
+        plt.hist(params[:, 0], bins=50, alpha=0.5, label="amp")
+        plt.legend()
+        plt.show()
+
+        plt.scatter(params[:, 0], params[:, 0])
+        plt.show()
+
+        plt.hist(params[:, 1], bins=50, alpha=0.5, label="wl")
+        plt.legend()
+        plt.show()
+
+        plt.scatter(params[:, 1], params[:, 1])
+        plt.show()
+        np.savetxt("results/amp_wl_phase_scatter_14KHz.csv", scatters, delimiter=",")
+
+    params = np.loadtxt("results/amp_wl_phase_params_14KHz.csv", delimiter=",")
+    scatters = np.loadtxt("results/amp_wl_phase_scatter_14KHz.csv", delimiter=",")
 
     # Update flat response factor here to get in model scale
     factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, SourceAngle, RecLoc, 0.02, sourceFreq)
 
     # Run the samplers and generate traces for each one
-    run_samplers = True
+    run_samplers = False
     kernel = "NUTS"
     userSamples = 700
     current_p = ""
@@ -137,7 +151,7 @@ def modelRun():
             s = scatters[i]
             current_p = "AMP-" + str(p[0]) + "-WL-" + str(p[1])
             pbar.set_postfix({'Current Params': current_p})
-            filename = "results/large-set/" + current_p
+            filename = output_folder + "/" + current_p
 
             # Create the model MCMC sampler
             mcmc = AcousticParameterMCMC(cosineCount=cosine_count, 
@@ -150,8 +164,8 @@ def modelRun():
             
             mcmc.setFileName(filename)
             mcmc.setAmplitudeProposal(np.array([0.01]))
-            mcmc.setWavelengthProposal(np.array([0.1]))
-            mcmc.setError(0.025 * np.max(s/factor))
+            mcmc.setWavelengthProposal(np.array([0.2]))
+            mcmc.setError(0.02)
             
             # Run the model MCMC sampler
             mcmc.run(kernel=kernel, 
@@ -162,27 +176,40 @@ def modelRun():
                         scaleTrueScatter=True,
                         targetAccRate=0.9)
             
-            posterior_samples_grouped = np.array(AcousticParameterMCMC.LoadCSVData(filename + ".csv"))
-            posterior_samples_grouped = AcousticParameterMCMC.AngularMeanData(posterior_samples_grouped, cosine_count)
-            posterior_samples_grouped = np.mean(posterior_samples_grouped,axis=0)
+    # Read in all CSV's from the large set group
+    def list_csv_files(directory):
+        return [os.path.join(directory, f) for f in os.listdir(directory) if f.endswith('.csv')]
+    
+    def tokenize_filename(filename):
+        return filename.rsplit('/', 1)[-1].split('-')
 
-            predicted_amps.append((p[0], posterior_samples_grouped[0]))
-            predicted_wls.append((p[1], posterior_samples_grouped[1]))
+    csv_files = list_csv_files(output_folder)
+    predicted_amps = []
+    predicted_wls = []
+    true_amps = []
+    true_wls = []
+    for file in csv_files:
+        posterior_samples_grouped = np.array(AcousticParameterMCMC.LoadCSVData(file))
+        posterior_samples_grouped = AcousticParameterMCMC.AngularMeanData(posterior_samples_grouped, cosine_count)
+        posterior_samples_grouped = np.mean(posterior_samples_grouped,axis=0).squeeze()
 
-            import corner
-            corner.corner(np.array(posterior_samples_grouped),bins=200,
-                    quantiles=[0.16, 0.5, 0.84],labels=[r"$\zeta_1$", r"$\zeta_2$", r"$\zeta_3$"],
-                    show_titles=True, title_fmt = ".4f")
-            plt.savefig("results/" + kernel + " corner.png")
-            plt.show()
+        predicted_amps.append(posterior_samples_grouped[0])
+        predicted_wls.append(posterior_samples_grouped[1])
+        tokens = tokenize_filename(file)
+        true_amps.append(float(tokens[1]))
+        true_wls.append(float("0." + tokens[3].split('.')[1]))
 
-        predicted_amps = np.array(predicted_amps)
-        predicted_wls = np.array(predicted_wls)
+    predicted_amps = np.array(predicted_amps)
+    predicted_wls = np.array(predicted_wls)
+    true_amps = np.array(true_amps)
+    true_wls = np.array(true_wls)
 
-        plt.scatter(predicted_amps)
-        plt.show()
-        plt.scatter(predicted_wls)
-        plt.show()
+    plt.scatter(true_amps, predicted_amps)
+    plt.scatter(true_amps, true_amps)
+    plt.show()
+    plt.scatter(true_wls, predicted_wls)
+    plt.scatter(true_wls, true_wls)
+    plt.show()
 
 
 if __name__ == "__main__":

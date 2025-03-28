@@ -8,9 +8,11 @@ import scienceplots
 from src.Directed2DVectorized import Directed2DVectorised
 from src.AcousticParameterMCMC import AcousticParameterMCMC
 
+
 from src.SymbolicMath import SymCosineSumSurfaceVectorized
 from src.SymbolicMath import SymCosineSumSurface as SurfaceFunctionMulti
-from src.SymbolicMath import SymRandomSurface
+from src.SymbolicMath import SymCosineSumSurface
+from src.SymbolicMath import SymCosineSurface
 
 def modelRun():
     plt.style.use('science')
@@ -85,11 +87,25 @@ def modelRun():
     # Real data
     truescatter = comp
 
-    # True params
-    p = [0.0015, 0.05, 0.0]
+    p = (0.0045, 0.05, 0.0)
 
-    sample_count = 6_000
-    burn_in_count = 3_000
+    userSamples = 700
+    factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, SourceAngle, RecLoc, 0.02, sourceFreq)
+    def generate_microphone_pressure(parameters,uSamples=userSamples):
+        def newFunction(x):
+            return SymCosineSurface(x, parameters)
+
+        KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,sourceFreq,0.02,SourceAngle,'simp',userMinMax=[-1,1],userSamples=uSamples,absolute=False)
+        scatter = KA_Object.Scatter(absolute=True,norm=False)
+        return scatter
+    
+    truescatter = generate_microphone_pressure(p)
+
+    # True params
+    #p = [0.0015, 0.05, 0.0]
+
+    sample_count = 100_000
+    burn_in_count = 10_000
     run_model = True
     kernel = "NUTS"
     userSamples = 700
@@ -105,7 +121,7 @@ def modelRun():
         
         mcmc.setAmplitudeProposal(np.array([0.01]))
         mcmc.setWavelengthProposal(np.array([0.1]))
-        mcmc.setError(0.025)
+        mcmc.setError(0.02)
         
         # Run the model MCMC sampler
         mcmc.run(kernel=kernel, 
@@ -124,9 +140,6 @@ def modelRun():
     # Scale true scatter here to compare to parameters
     factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, SourceAngle, RecLoc, 0.02, sourceFreq)
     truescatter = truescatter / factor
-
-    from src.SymbolicMath import SymCosineSumSurface
-    from src.SymbolicMath import SymCosineSurface
 
     # Creating mean surfaces
     print("Creating mean parameters surface")

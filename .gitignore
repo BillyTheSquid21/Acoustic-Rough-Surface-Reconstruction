@@ -6,5 +6,5 @@ results/*.csv
 results/*.png
 results/*.txt
 results/*.tar.gz
-results/*.nc
+*.nc
 model_graph*

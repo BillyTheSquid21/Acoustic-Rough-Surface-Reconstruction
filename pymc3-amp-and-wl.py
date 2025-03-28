@@ -5,12 +5,16 @@ import pymc as pm
 import seaborn as sns
 import pandas as pd
 import pytensor.tensor as pt
+import scienceplots
 from tqdm import tqdm
 from src.AcousticParameterBNN import BayesianNN
 
 from sklearn.model_selection import train_test_split
 
 if __name__ == "__main__":
+    plt.style.use('science')
+    plt.rcParams["font.family"] = "Bitstream Charter"
+
     np.random.seed(42)
 
     # Create the neural network model
@@ -99,7 +103,7 @@ if __name__ == "__main__":
             indices.append(i)
 
     generate_data = False
-    p_count = 20_000
+    p_count = 25_000
     
     if generate_data:
         params = []
@@ -136,7 +140,6 @@ if __name__ == "__main__":
     print("Combined params and scatter responses: ", training_data.shape)
 
     # Setup training data
-    # Create pandas dataframe (currently hard coded to 2 param recovery! TODO: maybe make more generic)
     # Split into test and training sets
     columns = ['amp','wl']
     for i in range(0, scatters.shape[1]):
@@ -148,7 +151,7 @@ if __name__ == "__main__":
     # X3 contains the receiver data
     # Y3 contains the parameter data
     X3_train, X3_test, Y3_train, Y3_test = train_test_split(
-        dataframe[columns[2*cosine_count:]], dataframe[columns[:2*cosine_count]], test_size=0.25, random_state=11)
+        dataframe[columns[2*cosine_count:]], dataframe[columns[:2*cosine_count]], test_size=0.2, random_state=11)
 
     print("Training params view ", Y3_train.shape, ":\n", Y3_train, "\n")
     print("Training scatter view ", X3_train.shape, ":\n", X3_train, "\n")
@@ -171,24 +174,68 @@ if __name__ == "__main__":
     plt.show()
 
     # Initialize and train model
-    bnn = BayesianNN(n_hidden=40)
+    bnn = BayesianNN(n_hidden=34)
     bnn.setName("amp_wl_bnn")
-    #bnn.train(X3_train, Y3_train, sampleCount=5000, burnInCount=2000)
+    bnn.train(X3_train, Y3_train, sampleCount=20_000, burnInCount=5_000)
     params = np.array(bnn.predict(X3_test, Y3_test)['param']).squeeze()
     amps = np.array(params[:,:,0])
     wls = np.array(params[:,:,1])
 
     amps_index = np.array(amps).squeeze()
-    pred_amp = amps_index.mean(axis=0)
+    # Convert to NumPy arrays
+    true_amp = np.array(Y3_test["amp"])
+    amps_sorted = np.array(amps_index)  # Shape (5000, 125)
 
+    # Step 1: Sort indices based on Y3_test["amp"]
+    sort_idx = np.argsort(true_amp)
+
+    # Step 2: Sort true test amplitudes
+    true_amp_sorted = true_amp[sort_idx]
+
+    # Step 3: Sort amps_index (reordering the posterior samples)
+    amps_sorted = amps_index[:, sort_idx]  # Maintain (5000, 125)
+
+    # Step 4: Compute HDI and mean again after sorting
+    amps_hdi_sorted = az.hdi(amps_sorted, hdi_prob=0.68).T
+
+    from scipy.signal import savgol_filter
+    window_length = 11  # Must be odd (adjust for smoothness)
+    polyorder = 2  # Polynomial order for fitting
+
+    lower_hdi_sorted, upper_hdi_sorted = amps_hdi_sorted
+    lower_hdi_smooth = savgol_filter(lower_hdi_sorted, window_length, polyorder)
+    upper_hdi_smooth = savgol_filter(upper_hdi_sorted, window_length, polyorder)
+    pred_amp_sorted = amps_sorted.mean(axis=0)
+
+    lower_err = pred_amp_sorted - lower_hdi_sorted
+    upper_err = upper_hdi_sorted - pred_amp_sorted
+
+    # Step 5: Plot with correctly sorted data
     plt.figure(figsize=(16, 9))
-    plt.scatter(np.array(Y3_test["amp"]), np.array(pred_amp), label="Predicted vs test")
-    plt.scatter(np.array(Y3_test["amp"]), np.array(Y3_test["amp"]), label="True test set")
+
+    # Scatter plot of predicted vs true values
+    plt.errorbar(
+        true_amp_sorted, pred_amp_sorted, 
+        yerr=[lower_err, upper_err], 
+        fmt='o', label="Predicted with 68%% HDI", 
+        capsize=4, capthick=1, alpha=0.7, markersize=5
+    )
+
+    # Scatter plot of true test values
+    plt.scatter(true_amp_sorted, true_amp_sorted, color='orange', label="True test set")
+
+    # Fill HDI region correctly
+    plt.fill_between(true_amp_sorted, lower_hdi_smooth, upper_hdi_smooth, 
+                    color='gray', alpha=0.3, label="68%% HDI")
+
     plt.legend()
+    plt.xlabel("True Amplitude")
+    plt.ylabel("Predicted Amplitude")
+    plt.title("Predicted vs True Amplitudes with 68% HDI")
     plt.show()
 
     from sklearn.metrics import r2_score
-    print("R2 score of BNN: ", r2_score(np.array(Y3_test["amp"]), pred_amp))
+    print("R2 score of BNN: ", r2_score(true_amp_sorted, pred_amp_sorted))
 
     wls_index = np.array(wls).squeeze()
     pred_wl = wls_index.mean(axis=0)
