@@ -13,15 +13,16 @@ class BayesianNN:
             plt.style.use('science')
             plt.rcParams["font.family"] = "Bitstream Charter"
 
-        def build_model(self):
+        def build_model(self, dropout=0.5):
+
             with pm.Model() as self.model:
-                # Prior distributions for weights and biases
+
                 W1 = pm.Normal("W1", mu=0, sigma=1, shape=(self.n_inputs, self.n_hidden))
                 b1 = pm.Normal("b1", mu=0, sigma=1, shape=(self.n_hidden,))
                 
                 W2 = pm.Normal("W2", mu=0, sigma=1, shape=(self.n_hidden, self.n_outputs))
                 b2 = pm.Normal("b2", mu=0, sigma=1, shape=(self.n_outputs,))
-                
+
                 #W3 = pm.Normal("W3", mu=0, sigma=1, shape=(self.n_hidden, self.n_hidden))
                 #b3 = pm.Normal("b3", mu=0, sigma=1, shape=(self.n_hidden,))
                 
@@ -36,19 +37,26 @@ class BayesianNN:
                 #hidden2 = pm.math.tanh(pt.dot(hidden1, W2) + b2)
                 #hidden3 = pm.math.tanh(pt.dot(hidden2, W3) + b3)
                 output = pt.dot(hidden1, W2) + b2
+
+                # Penalize negative values with exponential dropoff based on how many negative values exist
+                alpha = 10  # Controls steepness; lower values make penalty increase more slowly
+                neg_values = pt.minimum(output, 0)
+                neg_magnitude = -pt.sum(neg_values, axis=1)
+                penalty = pt.exp(-alpha * neg_magnitude)
+                pm.Potential("negative-penalty", pm.math.log(penalty))
                 
                 # Input param data
                 y = pm.Data("y", self.current_y.to_numpy())
 
                 sigma = pm.HalfNormal("sigma", sigma=1, shape=(self.n_outputs,))
-                pm.Normal("param", mu=output, sigma=sigma, observed=y)
+                params = pm.Normal("param", mu=output, sigma=sigma, observed=y)
         
         def train(self, train_x, train_y, burnInCount=2000, sampleCount=5000):
             self.current_x = train_x
             self.current_y = train_y
             self.n_inputs = train_x.shape[1]
             self.n_outputs = train_y.shape[1]
-            self.build_model()
+            self.build_model(dropout=0.75)
             with self.model:
 
                 az.rcParams['plot.max_subplots'] = 40
@@ -119,7 +127,7 @@ class BayesianNN:
             self.current_y = test_y
             self.n_inputs = test_x.shape[1]
             self.n_outputs = test_y.shape[1]
-            self.build_model()
+            self.build_model(dropout=1.0)
             with self.model:
                 pm.set_data({"X": test_x})
                 pm.set_data({"y": test_y})

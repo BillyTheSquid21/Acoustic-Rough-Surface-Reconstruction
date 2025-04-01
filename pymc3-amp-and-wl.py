@@ -174,9 +174,9 @@ if __name__ == "__main__":
     plt.show()
 
     # Initialize and train model
-    bnn = BayesianNN(n_hidden=34)
+    bnn = BayesianNN(n_hidden=200)
     bnn.setName("amp_wl_bnn")
-    bnn.train(X3_train, Y3_train, sampleCount=20_000, burnInCount=5_000)
+    bnn.train(X3_train, Y3_train, sampleCount=5_000, burnInCount=2_000)
     params = np.array(bnn.predict(X3_test, Y3_test)['param']).squeeze()
     amps = np.array(params[:,:,0])
     wls = np.array(params[:,:,1])
@@ -222,6 +222,7 @@ if __name__ == "__main__":
     )
 
     # Scatter plot of true test values
+    #plt.scatter(true_amp_sorted, pred_amp_sorted, label="amps")
     plt.scatter(true_amp_sorted, true_amp_sorted, color='orange', label="True test set")
 
     # Fill HDI region correctly
