@@ -87,7 +87,7 @@ def modelRun():
     # Real data
     truescatter = comp
 
-    p = (0.0045, 0.05, 0.0)
+    p = (0.004, 0.05, 0.0)
 
     userSamples = 700
     factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, SourceAngle, RecLoc, 0.02, sourceFreq)
@@ -104,7 +104,7 @@ def modelRun():
     # True params
     #p = [0.0015, 0.05, 0.0]
 
-    sample_count = 100_000
+    sample_count = 20_000
     burn_in_count = 10_000
     run_model = True
     kernel = "NUTS"
@@ -119,9 +119,9 @@ def modelRun():
                                      userSampleDensity=userSamples, 
                                      sourceFrequency=sourceFreq)
         
-        mcmc.setAmplitudeProposal(np.array([0.01]))
+        mcmc.setAmplitudeProposal(np.array([0.006]))
         mcmc.setWavelengthProposal(np.array([0.1]))
-        mcmc.setError(0.02)
+        mcmc.setError((np.max(truescatter)/factor)*0.04)
         
         # Run the model MCMC sampler
         mcmc.run(kernel=kernel, 

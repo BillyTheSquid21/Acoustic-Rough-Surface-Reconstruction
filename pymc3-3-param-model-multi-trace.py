@@ -22,7 +22,7 @@ def modelRun():
 
     cosine_count = 1
 
-    output_folder = "results/forward-model-amp-only"
+    output_folder = "results/forward-model-amp-only-20_40K"
 
     # Microphone array
     SourceLocation = [-0.20049999999999987,0.21884]
@@ -75,8 +75,6 @@ def modelRun():
 
     SourceAngle = np.pi / 3
     sourceFreq = 14_000
-    sample_count = 100_000
-    burn_in_count = 10_000
     userSamples = 700
 
     # Scatter data requirements
@@ -92,22 +90,23 @@ def modelRun():
 
     # Generate scatter for varying amps and wavelengths
     # Only vary two for now
-    p_count = 25
+    p_count = 20
 
-    generate_data = True
+    generate_data = False
     if generate_data:
         params = []
         scatters = []
-        ampspace = np.random.uniform(0.0, 0.01, p_count)
+        ampspace = np.linspace(0.01, 0.0, p_count) #np.random.uniform(0.0, 0.01, p_count)
         wlspace = np.random.uniform(0.05, 0.05, p_count)
         for i in range(p_count):
             params.append((ampspace[i], wlspace[i], 0.0))
             
-        np.savetxt("results/amp_wl_phase_params_14KHz.csv", params, delimiter=",")
-            
+        np.savetxt(output_folder + "/data/amp_wl_phase_params_14KHz.csv", params, delimiter=",")
+        
+        pc_noise = 0.1
         for p in tqdm (range(len(params)), desc="Generating param responses with noise"):
             s = generate_microphone_pressure(params[p])
-            s += np.random.normal(loc=0.0, scale=0.05*factor, size=(34,))
+            s += np.random.normal(loc=0.0, scale=np.max(s)*pc_noise, size=(34,))
             s = np.abs(s)
             scatters.append(s)
 
@@ -127,10 +126,10 @@ def modelRun():
 
         plt.scatter(params[:, 1], params[:, 1])
         plt.show()
-        np.savetxt("results/amp_wl_phase_scatter_14KHz.csv", scatters, delimiter=",")
+        np.savetxt(output_folder + "/data/amp_wl_phase_scatter_14KHz.csv", scatters, delimiter=",")
 
-    params = np.loadtxt("results/amp_wl_phase_params_14KHz.csv", delimiter=",")
-    scatters = np.loadtxt("results/amp_wl_phase_scatter_14KHz.csv", delimiter=",")
+    params = np.loadtxt(output_folder + "/data/amp_wl_phase_params_14KHz.csv", delimiter=",")
+    scatters = np.loadtxt(output_folder + "/data/amp_wl_phase_scatter_14KHz.csv", delimiter=",")
 
     # Update flat response factor here to get in model scale
     factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, SourceAngle, RecLoc, 0.02, sourceFreq)
@@ -141,9 +140,9 @@ def modelRun():
     userSamples = 700
     current_p = ""
 
+    sample_count = 10_000
+    burn_in_count = 5_000
     if run_samplers:
-        predicted_amps = []
-        predicted_wls = []
 
         pbar = tqdm(range(len(params)))
         for i in pbar:
@@ -163,9 +162,9 @@ def modelRun():
                                             sourceFrequency=sourceFreq)
             
             mcmc.setFileName(filename)
-            mcmc.setAmplitudeProposal(np.array([0.01]))
-            mcmc.setWavelengthProposal(np.array([0.2]))
-            mcmc.setError(0.02)
+            mcmc.setAmplitudeProposal(np.array([0.005]))
+            mcmc.setWavelengthProposal(np.array([0.1]))
+            mcmc.setError((np.max(s)/factor)*0.05)
             
             # Run the model MCMC sampler
             mcmc.run(kernel=kernel, 
@@ -184,32 +183,97 @@ def modelRun():
         return filename.rsplit('/', 1)[-1].split('-')
 
     csv_files = list_csv_files(output_folder)
-    predicted_amps = []
-    predicted_wls = []
     true_amps = []
     true_wls = []
+    posterior_samples_grouped = []
     for file in csv_files:
-        posterior_samples_grouped = np.array(AcousticParameterMCMC.LoadCSVData(file))
-        posterior_samples_grouped = AcousticParameterMCMC.AngularMeanData(posterior_samples_grouped, cosine_count)
-        posterior_samples_grouped = np.mean(posterior_samples_grouped,axis=0).squeeze()
-
-        predicted_amps.append(posterior_samples_grouped[0])
-        predicted_wls.append(posterior_samples_grouped[1])
+        posterior_samples_grouped.append(np.array(AcousticParameterMCMC.LoadCSVData(file)))
+        
         tokens = tokenize_filename(file)
         true_amps.append(float(tokens[1]))
         true_wls.append(float("0." + tokens[3].split('.')[1]))
 
-    predicted_amps = np.array(predicted_amps)
-    predicted_wls = np.array(predicted_wls)
-    true_amps = np.array(true_amps)
-    true_wls = np.array(true_wls)
+    posterior_samples_grouped = np.array(posterior_samples_grouped).squeeze()
 
-    plt.scatter(true_amps, predicted_amps)
-    plt.scatter(true_amps, true_amps)
+    amps = np.array(posterior_samples_grouped[:,:,0])
+    wls = np.array(posterior_samples_grouped[:,:,1])
+
+    # Convert to NumPy arrays
+    true_amp = np.array(true_amps)
+    true_wl = np.array(true_wls)
+
+    amps_hdi = az.hdi(amps.T, hdi_prob=0.68).T
+    wls_hdi = az.hdi(wls.T, hdi_prob=0.68).T
+
+    # Amps first
+    amp_lower_hdi, amp_upper_hdi = amps_hdi
+    pred_amp_sorted = amps.mean(axis=1)
+
+    lower_err = pred_amp_sorted - amp_lower_hdi
+    upper_err = np.maximum(amp_upper_hdi - pred_amp_sorted,0)
+
+    # Step 5: Plot with correctly sorted data
+    plt.figure(figsize=(16, 9))
+
+    # Scatter plot of predicted vs true values
+    plt.errorbar(
+        true_amp, pred_amp_sorted, 
+        yerr=[lower_err, upper_err], 
+        fmt='o', label="Predicted with 68\% HDI", 
+        capsize=4, capthick=1, alpha=0.7, markersize=5
+    )
+
+    # Scatter plot of true test values
+    #plt.scatter(true_amp_sorted, pred_amp_sorted, label="amps")
+    plt.scatter(true_amp, true_amp, color='orange', label="True test set")
+
+    # Fill HDI region correctly
+    #plt.fill_between(true_amp, amp_lower_hdi_smooth, amp_upper_hdi_smooth, 
+    #                color='gray', alpha=0.3, label="68%% HDI")
+
+    plt.legend()
+    plt.xlabel("True Amplitude")
+    plt.ylabel("Predicted Amplitude")
+    plt.title("Predicted Amplitude vs True Amplitudes with 68\% HDI")
     plt.show()
-    plt.scatter(true_wls, predicted_wls)
-    plt.scatter(true_wls, true_wls)
+
+    from sklearn.metrics import r2_score
+    print("R2 score of amp in BNN: ", r2_score(true_amp, pred_amp_sorted))
+
+    # WLs next
+    wl_lower_hdi, wl_upper_hdi = wls_hdi
+    pred_wl_sorted = wls.mean(axis=1)
+
+    lower_err = np.maximum(pred_wl_sorted - wl_lower_hdi,0)
+    upper_err = np.maximum(wl_upper_hdi - pred_wl_sorted,0)
+
+    # Step 5: Plot with correctly sorted data
+    plt.figure(figsize=(16, 9))
+
+    # Scatter plot of predicted vs true values
+    plt.errorbar(
+        true_amp, pred_wl_sorted, 
+        yerr=[lower_err, upper_err], 
+        fmt='o', label="Predicted with 68\% HDI", 
+        capsize=4, capthick=1, alpha=0.7, markersize=5
+    )
+
+    # Scatter plot of true test values
+    #plt.scatter(true_amp, pred_wl_sorted, label="wls")
+    plt.scatter(true_amp, true_wl, color='orange', label="True test set")
+
+    # Fill HDI region correctly
+    #plt.fill_between(true_amp, amp_lower_hdi_smooth, amp_upper_hdi_smooth, 
+    #                color='gray', alpha=0.3, label="68%% HDI")
+
+    plt.legend()
+    plt.xlabel("True Amplitude")
+    plt.ylabel("Predicted Wavelength")
+    plt.title("Predicted Wavelength vs True Amplitude with 68\% HDI")
     plt.show()
+
+    print("R2 score of amp in BNN: ", r2_score(true_wl, pred_wl_sorted))
+
 
 
 if __name__ == "__main__":

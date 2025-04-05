@@ -2,6 +2,7 @@ import pymc as pm
 import numpy as np
 import arviz as az
 import shutil
+import timeit
 
 import pytensor
 import pytensor.tensor as pt
@@ -142,6 +143,8 @@ class AcousticParameterMCMC:
         factor = 1.0
         if scaleTrueScatter:
             factor = self.generateFactor()
+
+        self._time = timeit.default_timer()
 
         if self._wavelengths is not None:
             self.runWithWavelengths(surfaceFunction, kernel, burnInCount, sampleCount, chainCount, targetAccRate, factor, showGraph)
@@ -373,6 +376,17 @@ class AcousticParameterMCMC:
         self._filename = name
  
     def _writeData(self, kernel, trace, totalSamples, N):
+
+        # Filename
+        filename = self._filename
+        if filename == "":
+            filename = "results/" + kernel
+
+        # Get processing time
+        dt = timeit.default_timer() - self._time
+        with open(self._filename + "-time.txt", "w") as txt:
+            txt.write("Duration (s): " + str(dt))
+
         # Flatten arrays with some numpy shaping trickery
         # Gives us columns so that each set of 3 params are next to each other
         posterior_samples = []
@@ -391,9 +405,6 @@ class AcousticParameterMCMC:
         posterior_samples = posterior_samples.reshape(totalSamples, N*3)
 
         # Save to csv with header
-        filename = self._filename
-        if filename == "":
-            filename = "results/" + kernel
         filename += ".csv"
         np.savetxt(filename, posterior_samples, delimiter=",", header=self._generateHeader(), fmt="%s")
         print("MCMC Results saved!")

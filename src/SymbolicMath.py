@@ -3,6 +3,9 @@ import pytensor.graph
 import pytensor.graph.op
 import pytensor.tensor as pt
 import numpy as np
+import scipy as sp
+from scipy.optimize import bisect
+import math
 
 def SymAngularMean(phases):
     '''
@@ -19,6 +22,30 @@ def SymAngularMean(phases):
     sin_sum = np.sum(np.sin(adjusted_phases))
     cos_sum = np.sum(np.cos(adjusted_phases))
     return np.arctan2(sin_sum, cos_sum)/(2.0*np.pi)
+
+def AcousticSourceDirectivity(theta, k, a):
+    '''
+    Directivity function for the microphones
+    '''
+    d = (sp.special.jn(1,k*a*np.sin(theta)))/(k*a*np.sin(theta))
+    if math.isnan(d):
+        return 0.5
+    return d
+
+def HalfPowerBeamWidth(k, a):
+    '''
+    Half Power Beam Width function for the lobe width
+    '''
+    max_directivity = AcousticSourceDirectivity(0, k, a)
+    half_power = max_directivity / 2
+        
+    # Function to find root where directivity equals half-power
+    def equation(theta):
+        return AcousticSourceDirectivity(theta, k, a) - half_power
+        
+    # Search for HPBW in the range [0, π/2]
+    theta1 = bisect(equation, 0, np.pi/2)
+    return 2 * theta1  # HPBW is the total width
 
 def SymRandomSurface(beta, x, t, velocity, depth, lM, lm, aw = 1e-3):
   '''

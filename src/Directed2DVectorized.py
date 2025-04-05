@@ -110,8 +110,8 @@ class Directed2DVectorised:
         self.condition = 1/((self.k*self.curvature)**0.333333333)
 
         if self.condition.max() > 1:
-            print("Condition failed")
-            print(self.condition.max())
+            #print("Condition failed")
+            #print(self.condition.max())
 
             self.checker = False
         else:

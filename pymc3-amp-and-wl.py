@@ -78,11 +78,11 @@ if __name__ == "__main__":
     from src.SymbolicMath import SymCosineSurface
     
     factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, SourceAngle, RecLoc, 0.02, frequency)
-    def generate_microphone_pressure(parameters,uSamples=700):
+    def generate_microphone_pressure(parameters,uSamples=700,a=0.02):
         def newFunction(x):
             return SymCosineSurface(x,parameters).copy()
 
-        KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,0.02,SourceAngle,'simp',userMinMax=[-1,1],userSamples=uSamples,absolute=False)
+        KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,a,SourceAngle,'simp',userMinMax=[-1,1],userSamples=uSamples,absolute=False)
         scatter = KA_Object.Scatter(absolute=True,norm=False)
         return scatter/factor 
     
@@ -94,7 +94,21 @@ if __name__ == "__main__":
     
     # Get point where directivity intersects
     specpoint = SourceLocation[0] + SourceLocation[1]*np.tan((np.pi/2)-SourceAngle)
-    specspread = 0.1 # 10 cm each side
+
+    # Get Half Power Beam Width
+    from src.SymbolicMath import HalfPowerBeamWidth
+    k = (2*np.pi*frequency)/343
+    a = 0.02
+    hpbw = HalfPowerBeamWidth(k, a)
+    print(f"Half-Power Beam Width: {np.degrees(hpbw):.2f} degrees")
+
+    # Work out spread based on width of node
+    # 1st method: from angle work out width of lobe at spec point
+    specdist = (np.array(SourceLocation) - specpoint)
+    specdist = np.sqrt(specdist.dot(specdist))
+    specspread = (specdist * (np.sin(hpbw/2))) / (np.sin(np.pi-SourceAngle-(hpbw/2)))
+    print("Specular point distance: ", specdist)
+    print("Specular spread: ", specspread)
 
     indices = []
     for i in range(len(RecLoc)):
@@ -102,23 +116,40 @@ if __name__ == "__main__":
         if rspec > specpoint - specspread and rspec < specpoint + specspread:
             indices.append(i)
 
+    print("Indices used: ", indices)
+
     generate_data = False
     p_count = 25_000
     
+    amp_bounds = [0.0, 0.01]
+    wl_bounds = [0.04, 0.2]
     if generate_data:
         params = []
         scatters = []
-        ampspace = np.random.uniform(0.0, 0.01, p_count)
-        wlspace = np.random.uniform(0.05, 0.2, p_count)
+        ampspace = np.random.uniform(amp_bounds[0], amp_bounds[1], p_count)
+        wlspace = np.random.uniform(wl_bounds[0], wl_bounds[1], p_count)
+        pc_noise = 0.1 # 10% noise level
+
         for i in range(p_count):
             params.append((ampspace[i], wlspace[i], 0.0))
-            
-        params = np.array(params)
-        np.savetxt("results/amp_wl_params_14KHz.csv", params, delimiter=",")
-            
-        for p in tqdm (range(len(params)), desc="Generating param responses with noise"):
-            s = generate_microphone_pressure(params[p])
-            s += np.random.normal(loc=0.0, scale=0.05, size=(34,))
+        
+        pbar = tqdm (range(len(params)), desc="Generating param responses with noise")
+        for p in pbar:
+            # Smoothness check
+            def newFunction(x):
+                return SymCosineSurface(x,params[p]).copy()
+
+            KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,a,SourceAngle,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
+            if not KA_Object.surfaceChecker(True, True):
+                # While the surface is not valid, keep rerolling until it is
+                while not KA_Object.surfaceChecker(True, True):
+                    params[p] = (np.random.uniform(amp_bounds[0], amp_bounds[1]), np.random.uniform(wl_bounds[0], wl_bounds[1]), 0.0)
+                    KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,a,SourceAngle,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
+
+            a = a + np.random.normal(loc=0.0, scale=a * 0.01) # Small 1% uncertainty to the aperture
+            s = KA_Object.Scatter(absolute=True,norm=False) / factor
+            s_max = np.max(s)
+            s += np.random.normal(loc=0.0, scale=s_max * pc_noise, size=(34,))
             s = np.abs(s)
             scatters.append(s[indices[0]:indices[-1]])
 
@@ -132,10 +163,13 @@ if __name__ == "__main__":
         plt.hist(params[:, 1], bins=50, alpha=0.5, label="wl")
         plt.legend()
         plt.show()
+
         np.savetxt("results/amp_wl_scatter_14KHz.csv", scatters, delimiter=",")
+        np.savetxt("results/amp_wl_params_14KHz.csv", params, delimiter=",")
 
     params = np.loadtxt("results/amp_wl_params_14KHz.csv", delimiter=",")
     scatters = np.loadtxt("results/amp_wl_scatter_14KHz.csv", delimiter=",")
+
     training_data = np.column_stack((params[:,:2], scatters))
     print("Combined params and scatter responses: ", training_data.shape)
 
@@ -174,41 +208,50 @@ if __name__ == "__main__":
     plt.show()
 
     # Initialize and train model
-    bnn = BayesianNN(n_hidden=200)
+    bnn = BayesianNN(n_hidden=len(indices)*1.5)
     bnn.setName("amp_wl_bnn")
-    bnn.train(X3_train, Y3_train, sampleCount=5_000, burnInCount=2_000)
+    bnn.train(X3_train, Y3_train, sampleCount=10_000, burnInCount=5_000)
     params = np.array(bnn.predict(X3_test, Y3_test)['param']).squeeze()
     amps = np.array(params[:,:,0])
     wls = np.array(params[:,:,1])
 
     amps_index = np.array(amps).squeeze()
+    wls_index = np.array(wls).squeeze()
+
     # Convert to NumPy arrays
     true_amp = np.array(Y3_test["amp"])
-    amps_sorted = np.array(amps_index)  # Shape (5000, 125)
+    true_wl = np.array(Y3_test["wl"])
+    amps_sorted = np.array(amps_index)
+    wls_sorted = np.array(wls_index)
 
-    # Step 1: Sort indices based on Y3_test["amp"]
-    sort_idx = np.argsort(true_amp)
+    # Step 1: Sort indices
+    sort_idx_amp = np.argsort(true_amp)
+    sort_idx_wl = np.argsort(true_wl)
 
-    # Step 2: Sort true test amplitudes
-    true_amp_sorted = true_amp[sort_idx]
+    # Step 2: Sort true test
+    true_amp_sorted = true_amp[sort_idx_amp]
+    true_wl_sorted = true_wl[sort_idx_wl]
 
-    # Step 3: Sort amps_index (reordering the posterior samples)
-    amps_sorted = amps_index[:, sort_idx]  # Maintain (5000, 125)
+    # Step 3: Sort index (reordering the posterior samples)
+    amps_sorted = amps_index[:, sort_idx_amp]
+    wls_sorted = wls_index[:, sort_idx_wl]
 
     # Step 4: Compute HDI and mean again after sorting
     amps_hdi_sorted = az.hdi(amps_sorted, hdi_prob=0.68).T
+    wls_hdi_sorted = az.hdi(wls_sorted, hdi_prob=0.68).T
 
     from scipy.signal import savgol_filter
     window_length = 11  # Must be odd (adjust for smoothness)
     polyorder = 2  # Polynomial order for fitting
 
-    lower_hdi_sorted, upper_hdi_sorted = amps_hdi_sorted
-    lower_hdi_smooth = savgol_filter(lower_hdi_sorted, window_length, polyorder)
-    upper_hdi_smooth = savgol_filter(upper_hdi_sorted, window_length, polyorder)
+    # Amps first
+    amp_lower_hdi_sorted, amp_upper_hdi_sorted = amps_hdi_sorted
+    amp_lower_hdi_smooth = savgol_filter(amp_lower_hdi_sorted, window_length, polyorder)
+    amp_upper_hdi_smooth = savgol_filter(amp_upper_hdi_sorted, window_length, polyorder)
     pred_amp_sorted = amps_sorted.mean(axis=0)
 
-    lower_err = pred_amp_sorted - lower_hdi_sorted
-    upper_err = upper_hdi_sorted - pred_amp_sorted
+    lower_err = pred_amp_sorted - amp_lower_hdi_sorted
+    upper_err = amp_upper_hdi_sorted - pred_amp_sorted
 
     # Step 5: Plot with correctly sorted data
     plt.figure(figsize=(16, 9))
@@ -226,7 +269,7 @@ if __name__ == "__main__":
     plt.scatter(true_amp_sorted, true_amp_sorted, color='orange', label="True test set")
 
     # Fill HDI region correctly
-    plt.fill_between(true_amp_sorted, lower_hdi_smooth, upper_hdi_smooth, 
+    plt.fill_between(true_amp_sorted, amp_lower_hdi_smooth, amp_upper_hdi_smooth, 
                     color='gray', alpha=0.3, label="68%% HDI")
 
     plt.legend()
@@ -236,15 +279,42 @@ if __name__ == "__main__":
     plt.show()
 
     from sklearn.metrics import r2_score
-    print("R2 score of BNN: ", r2_score(true_amp_sorted, pred_amp_sorted))
+    print("R2 score of amp in BNN: ", r2_score(true_amp_sorted, pred_amp_sorted))
 
-    wls_index = np.array(wls).squeeze()
-    pred_wl = wls_index.mean(axis=0)
+    #WLs next
+    wl_lower_hdi_sorted, wl_upper_hdi_sorted = wls_hdi_sorted
+    wl_lower_hdi_smooth = savgol_filter(wl_lower_hdi_sorted, window_length, polyorder)
+    wl_upper_hdi_smooth = savgol_filter(wl_upper_hdi_sorted, window_length, polyorder)
+    pred_wl_sorted = wls_sorted.mean(axis=0)
 
+    lower_err = pred_wl_sorted - wl_lower_hdi_sorted
+    upper_err = wl_upper_hdi_sorted - pred_wl_sorted
+
+    # Step 5: Plot with correctly sorted data
     plt.figure(figsize=(16, 9))
-    plt.scatter(np.array(Y3_test["wl"]), np.array(pred_wl), label="Predicted vs test")
-    plt.scatter(np.array(Y3_test["wl"]), np.array(Y3_test["wl"]), label="True test set")
+
+    # Scatter plot of predicted vs true values
+    plt.errorbar(
+        true_wl_sorted, pred_wl_sorted, 
+        yerr=[lower_err, upper_err], 
+        fmt='o', label="Predicted with 68%% HDI", 
+        capsize=4, capthick=1, alpha=0.7, markersize=5
+    )
+
+    # Scatter plot of true test values
+    #plt.scatter(true_amp_sorted, pred_amp_sorted, label="amps")
+    plt.scatter(true_wl_sorted, true_wl_sorted, color='orange', label="True test set")
+
+    # Fill HDI region correctly
+    plt.fill_between(true_wl_sorted, wl_lower_hdi_smooth, wl_upper_hdi_smooth, 
+                    color='gray', alpha=0.3, label="68%% HDI")
+
     plt.legend()
+    plt.xlabel("True Wavelength")
+    plt.ylabel("Predicted Wavelength")
+    plt.title("Predicted vs True Wavelengths with 68% HDI")
     plt.show()
 
-    print("R2 score of BNN: ", r2_score(np.array(Y3_test["wl"]), pred_wl))
+    print("R2 score of amp in BNN: ", r2_score(true_wl_sorted, pred_wl_sorted))
+
+    print("R2 score of total BNN: ", r2_score((true_amp_sorted, true_wl_sorted), (pred_amp_sorted, pred_wl_sorted)))
