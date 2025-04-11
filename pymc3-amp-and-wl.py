@@ -70,7 +70,7 @@ if __name__ == "__main__":
         RecLoc.append([ReceiverLocationsX[i],ReceiverLocationsY[i]])
 
     SourceAngle = np.pi / 3
-
+    a = 0.02
     frequency = 14_000
 
     from src.AcousticParameterMCMC import AcousticParameterMCMC
@@ -86,41 +86,24 @@ if __name__ == "__main__":
         scatter = KA_Object.Scatter(absolute=True,norm=False)
         return scatter/factor 
     
-    def get_spec_point(sourceloc, recloc):
-        '''
-        Zero index is source, One index is reciever
-        '''
-        return (recloc[0]*sourceloc[1])/(sourceloc[1]+recloc[1])
-    
-    # Get point where directivity intersects
-    specpoint = SourceLocation[0] + SourceLocation[1]*np.tan((np.pi/2)-SourceAngle)
-
-    # Get Half Power Beam Width
-    from src.SymbolicMath import HalfPowerBeamWidth
-    k = (2*np.pi*frequency)/343
-    a = 0.02
-    hpbw = HalfPowerBeamWidth(k, a)
-    print(f"Half-Power Beam Width: {np.degrees(hpbw):.2f} degrees")
-
-    # Work out spread based on width of node
-    # 1st method: from angle work out width of lobe at spec point
-    specdist = (np.array(SourceLocation) - specpoint)
-    specdist = np.sqrt(specdist.dot(specdist))
-    specspread = (specdist * (np.sin(hpbw/2))) / (np.sin(np.pi-SourceAngle-(hpbw/2)))
-    print("Specular point distance: ", specdist)
-    print("Specular spread: ", specspread)
-
-    indices = []
-    for i in range(len(RecLoc)):
-        rspec = get_spec_point(SourceLocation, RecLoc[i])
-        if rspec > specpoint - specspread and rspec < specpoint + specspread:
-            indices.append(i)
+    from src.SymbolicMath import GetSpecularIndices
+    indices = GetSpecularIndices(SourceLocation, SourceAngle, frequency, RecLoc)
+    last_indice = indices[-1]
+    for i in range(6):
+        indices.append(last_indice + i)
 
     print("Indices used: ", indices)
 
-    generate_data = False
-    p_count = 25_000
+    generate_data = True
+    p_count = 6_000
     
+    from src.SymbolicMath import SymRMS
+    def noise_sigma(s, pc):
+        '''
+        Get scale of noise from rms average of the signal
+        '''
+        return (SymRMS(np.array(s)))*pc
+
     amp_bounds = [0.0, 0.01]
     wl_bounds = [0.04, 0.2]
     if generate_data:
@@ -128,7 +111,7 @@ if __name__ == "__main__":
         scatters = []
         ampspace = np.random.uniform(amp_bounds[0], amp_bounds[1], p_count)
         wlspace = np.random.uniform(wl_bounds[0], wl_bounds[1], p_count)
-        pc_noise = 0.1 # 10% noise level
+        pc_noise = 0.2
 
         for i in range(p_count):
             params.append((ampspace[i], wlspace[i], 0.0))
@@ -139,17 +122,17 @@ if __name__ == "__main__":
             def newFunction(x):
                 return SymCosineSurface(x,params[p]).copy()
 
+            an = a + np.random.normal(loc=0.0, scale=a*0.01) # Small 1% uncertainty to the aperture
+
             KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,a,SourceAngle,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
             if not KA_Object.surfaceChecker(True, True):
                 # While the surface is not valid, keep rerolling until it is
                 while not KA_Object.surfaceChecker(True, True):
                     params[p] = (np.random.uniform(amp_bounds[0], amp_bounds[1]), np.random.uniform(wl_bounds[0], wl_bounds[1]), 0.0)
-                    KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,a,SourceAngle,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
+                    KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,an,SourceAngle,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
 
-            a = a + np.random.normal(loc=0.0, scale=a * 0.01) # Small 1% uncertainty to the aperture
             s = KA_Object.Scatter(absolute=True,norm=False) / factor
-            s_max = np.max(s)
-            s += np.random.normal(loc=0.0, scale=s_max * pc_noise, size=(34,))
+            s += np.random.normal(loc=0.0, scale=noise_sigma(s, pc_noise), size=(34,))
             s = np.abs(s)
             scatters.append(s[indices[0]:indices[-1]])
 
@@ -167,8 +150,8 @@ if __name__ == "__main__":
         np.savetxt("results/amp_wl_scatter_14KHz.csv", scatters, delimiter=",")
         np.savetxt("results/amp_wl_params_14KHz.csv", params, delimiter=",")
 
-    params = np.loadtxt("results/amp_wl_params_14KHz.csv", delimiter=",")
-    scatters = np.loadtxt("results/amp_wl_scatter_14KHz.csv", delimiter=",")
+    params = np.loadtxt("results/amp_wl_params_14KHz.csv", delimiter=",")[:1000]
+    scatters = np.loadtxt("results/amp_wl_scatter_14KHz.csv", delimiter=",")[:1000]
 
     training_data = np.column_stack((params[:,:2], scatters))
     print("Combined params and scatter responses: ", training_data.shape)
@@ -208,9 +191,9 @@ if __name__ == "__main__":
     plt.show()
 
     # Initialize and train model
-    bnn = BayesianNN(n_hidden=len(indices)*1.5)
+    bnn = BayesianNN(n_hidden=25)
     bnn.setName("amp_wl_bnn")
-    bnn.train(X3_train, Y3_train, sampleCount=10_000, burnInCount=5_000)
+    #bnn.train(X3_train, Y3_train, sampleCount=25_000, burnInCount=5_000)
     params = np.array(bnn.predict(X3_test, Y3_test)['param']).squeeze()
     amps = np.array(params[:,:,0])
     wls = np.array(params[:,:,1])
@@ -241,7 +224,7 @@ if __name__ == "__main__":
     wls_hdi_sorted = az.hdi(wls_sorted, hdi_prob=0.68).T
 
     from scipy.signal import savgol_filter
-    window_length = 11  # Must be odd (adjust for smoothness)
+    window_length = 13  # Must be odd (adjust for smoothness)
     polyorder = 2  # Polynomial order for fitting
 
     # Amps first

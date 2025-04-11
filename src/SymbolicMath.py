@@ -23,6 +23,44 @@ def SymAngularMean(phases):
     cos_sum = np.sum(np.cos(adjusted_phases))
     return np.arctan2(sin_sum, cos_sum)/(2.0*np.pi)
 
+def SymRMS(x):
+    return np.sqrt(np.mean(x**2.0))
+
+def GetSpecularIndices(sourceLocation, sourceAngle, sourceFreq, receiverLoc):
+    '''
+    Get the indices of the receivers within the specular region
+    '''
+
+    def get_spec_point(sourceloc, recloc):
+        '''
+        Zero index is source, One index is reciever
+        '''
+        return (recloc[0]*sourceloc[1])/(sourceloc[1]+recloc[1])
+    
+    # Get point where directivity intersects
+    specpoint = sourceLocation[0] + sourceLocation[1]*np.tan((np.pi/2)-sourceAngle)
+
+    # Get Half Power Beam Width
+    k = (2*np.pi*sourceFreq)/343
+    a = 0.02
+    hpbw = HalfPowerBeamWidth(k, a)
+    #print(f"Half-Power Beam Width: {np.degrees(hpbw):.2f} degrees")
+
+    # Work out spread based on width of node
+    # 1st method: from angle work out width of lobe at spec point
+    specdist = (np.array(sourceLocation) - specpoint)
+    specdist = np.sqrt(specdist.dot(specdist))
+    specspread = (specdist * (np.sin(hpbw/2))) / (np.sin(np.pi-sourceAngle-(hpbw/2)))
+    #print("Specular point distance: ", specdist)
+    #print("Specular spread: ", specspread)
+
+    indices = []
+    for i in range(len(receiverLoc)):
+        rspec = get_spec_point(sourceLocation, receiverLoc[i])
+        if rspec > specpoint - specspread and rspec < specpoint + specspread:
+            indices.append(i)
+    return indices
+
 def AcousticSourceDirectivity(theta, k, a):
     '''
     Directivity function for the microphones

@@ -152,8 +152,16 @@ class AcousticParameterMCMC:
             self.runWithFull(surfaceFunction, kernel, burnInCount, sampleCount, chainCount, targetAccRate, factor, showGraph)  
 
     def runWithFull(self, surfaceFunction=None, kernel="NUTS", burnInCount=2000, sampleCount=5000, chainCount=4, targetAccRate=0.238, factor=1.0, showGraph=False):
+        # For now try restricting to specular region
+        from src.SymbolicMath import GetSpecularIndices
+        indices = GetSpecularIndices(self.sourceLocation, self.sourceAngle, self.sourceFrequency, self.receiverLocations)
+
+        # Add 50% buffer to indices to give some more information)
+        indices[-1] = 34#int(indices[-1] * 1.5)
+        print("Restricted MCMC to indices: ", indices[0], " to ", indices[-1])
+
         # Normalize the scatter to the flat plate response
-        factorizedScatter = self.trueScatter/factor
+        factorizedScatter = self.trueScatter[indices[0]:indices[-1]]/factor
 
         # Set the number of waves to reconstruct
         if self.cosineCount == 0:
@@ -165,16 +173,16 @@ class AcousticParameterMCMC:
         wlSigmas = self.getWavelengthProposal()
 
         phase_init_vals = np.linspace(1e-6, 2.0*np.pi, N+1)[:N]
-        cov_matrix = np.eye(len(factorizedScatter)) * self._error
+        cov_matrix = np.eye(len(factorizedScatter[indices[0]:indices[-1]])) * self._error
         chol = np.linalg.cholesky(cov_matrix)
         with pm.Model() as model:
 
             # Proposal for each set of 3 params      
             # Von Mises for now as naturally works for angles but can be slower for more dimensions
             # I'll deal with that when this bit of code goes there         
-            wavelengths = pm.TruncatedNormal('wl', sigma=wlSigmas, lower=0.0, shape=(N,))
-            amplitudes = pm.TruncatedNormal('amp', sigma=ampSigmas, lower=0.0, shape=(N,), initval=1e-6 + pt.zeros(shape=(N,)))
-            phases = pm.VonMises('phase', mu=0.0, kappa=0.0, initval=phase_init_vals, shape=(N,))
+            wavelengths = pm.HalfNormal('wl', sigma=wlSigmas, shape=(N,), initval=wlSigmas)
+            amplitudes = pm.HalfNormal('amp', sigma=ampSigmas, shape=(N,), initval=1e-6 + pt.zeros(shape=(N,)))
+            phases = pm.VonMises('phase', mu=0.0, kappa=0.0, shape=(N,), initval=phase_init_vals)
 
             # Surface function with evaluated parameters
             def newFunction(x):
@@ -197,7 +205,7 @@ class AcousticParameterMCMC:
                 userSamples=self.userSampleDensity,
                 absolute=False
             )
-            scatter = KA_Object.Scatter(absolute=True, norm=False)
+            scatter = KA_Object.Scatter(absolute=True, norm=False)[indices[0]:indices[-1]]
             scatter = scatter / factor
             KA_Object.surfaceChecker() #Adds pm.Potential penalty if kirchoff criteria not met
             
@@ -379,12 +387,12 @@ class AcousticParameterMCMC:
 
         # Filename
         filename = self._filename
-        if filename == "":
+        if not filename:
             filename = "results/" + kernel
 
         # Get processing time
         dt = timeit.default_timer() - self._time
-        with open(self._filename + "-time.txt", "w") as txt:
+        with open(filename + "-time.txt", "w") as txt:
             txt.write("Duration (s): " + str(dt))
 
         # Flatten arrays with some numpy shaping trickery
@@ -427,7 +435,7 @@ class AcousticParameterMCMC:
         import matplotlib.pyplot as plt
 
         az.rcParams['plot.max_subplots'] = 40
-        summary = az.summary(self.trace, circ_var_names=["phase"])
+        summary = az.summary(self.trace, circ_var_names=["phase"], round_to=5)
         print(summary)
 
         with open("results/output.txt", "w") as txt:
@@ -437,18 +445,23 @@ class AcousticParameterMCMC:
 
         # Rescale the trace values and deviations
         scaled_trace = self.trace.copy()
+        scaled_trace = scaled_trace.rename_vars({
+            "amp": "A (m)",
+            "wl": "$\lambda$ (m)",
+            "phase": "$\phi$ (rad)"
+        })
 
         # Phase
-        scaled_trace.posterior["phase"] = self.trace.posterior["phase"]
-        az.plot_trace(scaled_trace, var_names=["phase"], divergences=False, compact=False, combined=False)
+        #scaled_trace.posterior["phase"] = self.trace.posterior["phase"]
+        az.plot_trace(scaled_trace, var_names=["$\phi$ (rad)"], divergences=False, compact=False, combined=False)
         fig = plt.gcf()
         fig.tight_layout()
         fig.subplots_adjust(hspace=0.5, wspace=0.3)
         plt.savefig("results/" + self._kernel.lower() + "-phase-pymc-trace.png")
 
         # Amp
-        scaled_trace.posterior["amp"] = self.trace.posterior["amp"]
-        az.plot_trace(scaled_trace, var_names=["amp"], divergences=False, compact=False, combined=False)
+        #scaled_trace.posterior["amp"] = self.trace.posterior["amp"]
+        az.plot_trace(scaled_trace, var_names=["A (m)"], divergences=False, compact=False, combined=False)
         fig = plt.gcf()
         fig.tight_layout()
         fig.subplots_adjust(hspace=0.5, wspace=0.3)
@@ -458,8 +471,8 @@ class AcousticParameterMCMC:
 
         # WL
         if self._wavelengths is None:
-            scaled_trace.posterior["wl"] = self.trace.posterior["wl"]
-            az.plot_trace(scaled_trace, var_names=["wl"], divergences=False, compact=False, combined=False)
+            #scaled_trace.posterior["wl"] = self.trace.posterior["wl"]
+            az.plot_trace(scaled_trace, var_names=["$\lambda$ (m)"], divergences=False, compact=False, combined=False)
             fig = plt.gcf()
             fig.tight_layout()
             fig.subplots_adjust(hspace=0.5, wspace=0.3)

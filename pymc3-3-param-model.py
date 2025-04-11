@@ -13,6 +13,7 @@ from src.SymbolicMath import SymCosineSumSurfaceVectorized
 from src.SymbolicMath import SymCosineSumSurface as SurfaceFunctionMulti
 from src.SymbolicMath import SymCosineSumSurface
 from src.SymbolicMath import SymCosineSurface
+from src.SymbolicMath import SymRMS
 
 def modelRun():
     plt.style.use('science')
@@ -87,26 +88,35 @@ def modelRun():
     # Real data
     truescatter = comp
 
-    p = (0.004, 0.05, 0.0)
+    p = (0.0015, 0.05, 0.0)
 
     userSamples = 700
     factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, SourceAngle, RecLoc, 0.02, sourceFreq)
+    pc_noise = 0.2
+    def noise_sigma(s, pc):
+        '''
+        Get scale of noise from rms average of the signal
+        '''
+        return (SymRMS(np.array(s)))*pc
+
     def generate_microphone_pressure(parameters,uSamples=userSamples):
         def newFunction(x):
             return SymCosineSurface(x, parameters)
 
         KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,sourceFreq,0.02,SourceAngle,'simp',userMinMax=[-1,1],userSamples=uSamples,absolute=False)
         scatter = KA_Object.Scatter(absolute=True,norm=False)
+        scatter += np.random.normal(loc=0.0, scale=noise_sigma(scatter, pc_noise), size=(34,))
+        scatter = np.abs(scatter)
         return scatter
     
-    truescatter = generate_microphone_pressure(p)
+    #truescatter = generate_microphone_pressure(p)
 
     # True params
     #p = [0.0015, 0.05, 0.0]
 
     sample_count = 20_000
-    burn_in_count = 10_000
-    run_model = True
+    burn_in_count = 20_000
+    run_model = False
     kernel = "NUTS"
     userSamples = 700
     if run_model:
@@ -119,9 +129,9 @@ def modelRun():
                                      userSampleDensity=userSamples, 
                                      sourceFrequency=sourceFreq)
         
-        mcmc.setAmplitudeProposal(np.array([0.006]))
+        mcmc.setAmplitudeProposal(np.array([0.01]))
         mcmc.setWavelengthProposal(np.array([0.1]))
-        mcmc.setError((np.max(truescatter)/factor)*0.04)
+        mcmc.setError(0.15**2)
         
         # Run the model MCMC sampler
         mcmc.run(kernel=kernel, 
@@ -171,7 +181,7 @@ def modelRun():
 
     plt.figure(figsize = (16,9))
     plt.grid()
-    plt.fill_between(x,mins,maxx,color='grey',alpha=0.50,label='Credible interval (68)')
+    plt.fill_between(x,mins,maxx,color='grey',alpha=0.50,label='Credible interval (68\%)')
     plt.plot(x,mean_surf, label='Surface formed from the mean of the model surfaces')
     plt.plot(x,mean,label='Surface formed from the mean of the model parameters')
     plt.plot(x,true,label='True surface')
@@ -179,8 +189,8 @@ def modelRun():
     choice_count = 300
     b = np.random.choice(range(sample_count),choice_count)
 
-    plt.xlabel("x [m]")
-    plt.ylabel("Surface elevation")
+    plt.xlabel("x (m)")
+    plt.ylabel("Surface elevation (m)")
     plt.legend()
     plt.savefig("results/" + kernel.lower() + " reconstruction.png")
 
@@ -205,10 +215,25 @@ def modelRun():
     plt.savefig("results/" + kernel + " traces.png")
 
     import corner
-    corner.corner(np.array(posterior_samples_grouped),bins=200,
-              quantiles=[0.16, 0.5, 0.84],labels=[r"$\zeta_1$", r"$\zeta_2$", r"$\zeta_3$"],
+    corner.corner(np.array(posterior_samples_grouped)*np.array([100.0,100.0,2.0*np.pi]),bins=200,
+              quantiles=[0.16, 0.5, 0.84],labels=[r"A (cm)", r"$\lambda$ (cm)", r"$\phi$ (rad)"],
               show_titles=True, title_fmt = ".4f")
     plt.savefig("results/" + kernel + " corner.png")
+    plt.show()
+
+    plt.figure(figsize=(16,9))
+    font = {'family' : 'normal',
+            'weight' : 'normal',
+            'size'   : 14}
+
+    x = np.linspace(0,0.6,500)
+
+    plt.grid()
+    plt.plot(x,np.sqrt((mean-true)**2)/np.std(true),color='k',linestyle='dotted',label="Relative error of the mean of the surfaces")
+    plt.plot(x,np.sqrt((mean_surf-true)**2)/np.std(true),color='k',label="Relative error of the mean of the parameters")
+    plt.xlabel("x")
+    plt.ylabel("RSE factored by the standard deviation of the true surface")
+    plt.legend()
     plt.show()
 
 

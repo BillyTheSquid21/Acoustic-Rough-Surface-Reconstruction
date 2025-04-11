@@ -121,9 +121,9 @@ def modelRun():
     # Proposal stds
     amp_stds = np.linspace(1.0*amps_scale, 0.5*amps_scale, cosine_count)
 
-    sample_count = 250_000
-    burn_in_count = 50_000
-    run_model = False
+    sample_count = 20_000
+    burn_in_count = 20_000
+    run_model = True
     kernel = "NUTS"
     userSamples = 700
     if run_model:
@@ -146,7 +146,7 @@ def modelRun():
                  burnInCount=burn_in_count, 
                  sampleCount=sample_count, 
                  scaleTrueScatter=True,
-                 targetAccRate=0.95)
+                 targetAccRate=0.9)
         
         mcmc.plotTrace()
     
@@ -165,7 +165,7 @@ def modelRun():
     x = np.linspace(0,0.6,500)
 
     hmm2 = posterior_samples_grouped.copy()
-    hmm2 = AcousticParameterMCMC.AngularMeanData(hmm2, cosine_count)
+    #hmm2 = AcousticParameterMCMC.AngularMeanData(hmm2, cosine_count)
     hmm2 = np.mean(hmm2,axis=0)
     mean = SymCosineSumSurface(x,hmm2)
     true = SymCosineSumSurfaceM(x,amps,waves,phases).copy()

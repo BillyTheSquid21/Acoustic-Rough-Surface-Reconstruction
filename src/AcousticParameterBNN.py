@@ -26,11 +26,8 @@ class BayesianNN:
                 W3 = pm.Normal("W3", mu=0, sigma=1, shape=(self.n_hidden, self.n_hidden))
                 b3 = pm.Normal("b3", mu=0, sigma=1, shape=(self.n_hidden,))
 
-                W4 = pm.Normal("W4", mu=0, sigma=1, shape=(self.n_hidden, self.n_hidden))
-                b4 = pm.Normal("b4", mu=0, sigma=1, shape=(self.n_hidden,))
-
-                W5 = pm.Normal("W5", mu=0, sigma=1, shape=(self.n_hidden, self.n_outputs))
-                b5 = pm.Normal("b5", mu=0, sigma=1, shape=(self.n_outputs,))
+                W4 = pm.Normal("W5", mu=0, sigma=1, shape=(self.n_hidden, self.n_outputs))
+                b4 = pm.Normal("b5", mu=0, sigma=1, shape=(self.n_outputs,))
                 
                 # Input scatter data
                 X = pm.Data("X", self.current_x.to_numpy())
@@ -39,8 +36,7 @@ class BayesianNN:
                 hidden1 = pm.math.tanh(pt.dot(X, W1) + b1)
                 hidden2 = pm.math.tanh(pt.dot(hidden1, W2) + b2)
                 hidden3 = pm.math.tanh(pt.dot(hidden2, W3) + b3)
-                hidden4 = pm.math.tanh(pt.dot(hidden3, W4) + b4)
-                output = pt.dot(hidden4, W5) + b5
+                output = pt.dot(hidden3, W4) + b4
 
                 # Penalize negative values for mu with exponential dropoff based on how many negative values exist
                 alpha = 10  # Controls steepness; lower values make penalty increase more slowly
@@ -53,7 +49,7 @@ class BayesianNN:
                 y = pm.Data("y", self.current_y.to_numpy())
 
                 sigma = pm.HalfNormal("sigma", sigma=0.1, shape=(self.n_outputs,))
-                params = pm.Normal("param", mu=output, sigma=sigma, observed=y)
+                params = pm.TruncatedNormal("param", lower=0.0, mu=output, sigma=sigma, observed=y)
         
         def train(self, train_x, train_y, burnInCount=2000, sampleCount=5000):
             self.current_x = train_x
@@ -114,30 +110,6 @@ class BayesianNN:
                 fig.subplots_adjust(hspace=0.5, wspace=0.3)
                 plt.savefig("results/" + self.name + "_b3_trace.png")
 
-                az.plot_trace(self.trace, var_names=["W4"], divergences=False, compact=False, combined=False)
-                fig = plt.gcf()
-                fig.tight_layout()
-                fig.subplots_adjust(hspace=0.5, wspace=0.3)
-                plt.savefig("results/" + self.name + "_w4_trace.png")
-
-                az.plot_trace(self.trace, var_names=["b4"], divergences=False, compact=False, combined=False)
-                fig = plt.gcf()
-                fig.tight_layout()
-                fig.subplots_adjust(hspace=0.5, wspace=0.3)
-                plt.savefig("results/" + self.name + "_b4_trace.png")
-
-                az.plot_trace(self.trace, var_names=["W5"], divergences=False, compact=False, combined=False)
-                fig = plt.gcf()
-                fig.tight_layout()
-                fig.subplots_adjust(hspace=0.5, wspace=0.3)
-                plt.savefig("results/" + self.name + "_w5_trace.png")
-
-                az.plot_trace(self.trace, var_names=["b5"], divergences=False, compact=False, combined=False)
-                fig = plt.gcf()
-                fig.tight_layout()
-                fig.subplots_adjust(hspace=0.5, wspace=0.3)
-                plt.savefig("results/" + self.name + "_b5_trace.png")
-
                 summary = az.summary(self.trace)
                 print(summary)
 
@@ -153,7 +125,7 @@ class BayesianNN:
             self.current_y = test_y
             self.n_inputs = test_x.shape[1]
             self.n_outputs = test_y.shape[1]
-            self.build_model(dropout=1.0)
+            self.build_model()
             with self.model:
                 pm.set_data({"X": test_x})
                 pm.set_data({"y": test_y})

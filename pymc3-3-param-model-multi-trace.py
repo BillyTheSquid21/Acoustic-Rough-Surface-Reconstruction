@@ -12,6 +12,7 @@ from src.AcousticParameterMCMC import AcousticParameterMCMC
 
 from src.SymbolicMath import SymCosineSumSurfaceVectorized
 from src.SymbolicMath import SymCosineSurface
+from src.SymbolicMath import SymRMS
 
 def modelRun():
     plt.style.use('science')
@@ -22,7 +23,7 @@ def modelRun():
 
     cosine_count = 1
 
-    output_folder = "results/forward-model-amp-only-20_40K"
+    output_folder = "results/rerun-1-10k"
 
     # Microphone array
     SourceLocation = [-0.20049999999999987,0.21884]
@@ -90,23 +91,29 @@ def modelRun():
 
     # Generate scatter for varying amps and wavelengths
     # Only vary two for now
-    p_count = 20
+    p_count = 25
+    pc_noise = 0.2
 
-    generate_data = False
+    def noise_sigma(s, pc):
+        '''
+        Get scale of noise from rms average of the signal
+        '''
+        return (SymRMS(np.array(s)))*pc
+
+    generate_data = True
     if generate_data:
         params = []
         scatters = []
-        ampspace = np.linspace(0.01, 0.0, p_count) #np.random.uniform(0.0, 0.01, p_count)
-        wlspace = np.random.uniform(0.05, 0.05, p_count)
+        ampspace = np.linspace(0.0015, 0.01, p_count) #np.random.uniform(0.0, 0.01, p_count)
+        wlspace = np.linspace(0.075, 0.075, p_count)
         for i in range(p_count):
             params.append((ampspace[i], wlspace[i], 0.0))
             
         np.savetxt(output_folder + "/data/amp_wl_phase_params_14KHz.csv", params, delimiter=",")
         
-        pc_noise = 0.1
         for p in tqdm (range(len(params)), desc="Generating param responses with noise"):
             s = generate_microphone_pressure(params[p])
-            s += np.random.normal(loc=0.0, scale=np.max(s)*pc_noise, size=(34,))
+            s += np.random.normal(loc=0.0, scale=noise_sigma(s, pc_noise), size=(34,))
             s = np.abs(s)
             scatters.append(s)
 
@@ -140,8 +147,8 @@ def modelRun():
     userSamples = 700
     current_p = ""
 
-    sample_count = 10_000
-    burn_in_count = 5_000
+    sample_count = 20_000
+    burn_in_count = 20_000
     if run_samplers:
 
         pbar = tqdm(range(len(params)))
@@ -162,9 +169,9 @@ def modelRun():
                                             sourceFrequency=sourceFreq)
             
             mcmc.setFileName(filename)
-            mcmc.setAmplitudeProposal(np.array([0.005]))
-            mcmc.setWavelengthProposal(np.array([0.1]))
-            mcmc.setError((np.max(s)/factor)*0.05)
+            mcmc.setAmplitudeProposal(np.array([0.01]))
+            mcmc.setWavelengthProposal(np.array([0.2]))
+            mcmc.setError(0.15**2)
             
             # Run the model MCMC sampler
             mcmc.run(kernel=kernel, 
@@ -234,7 +241,7 @@ def modelRun():
     plt.legend()
     plt.xlabel("True Amplitude")
     plt.ylabel("Predicted Amplitude")
-    plt.title("Predicted Amplitude vs True Amplitudes with 68\% HDI")
+    plt.title("Predicted Amplitude vs True Amplitude with 68\% HDI")
     plt.show()
 
     from sklearn.metrics import r2_score
