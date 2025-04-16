@@ -13,7 +13,10 @@ class BayesianNN:
             plt.style.use('science')
             plt.rcParams["font.family"] = "Bitstream Charter"
 
-        def build_model(self):
+        def build_model(self, penalty_mask=1.0):
+            '''
+            Penalty mask is used to allow some negative values (e.g. phase)
+            '''
 
             with pm.Model() as self.model:
 
@@ -39,24 +42,42 @@ class BayesianNN:
                 output = pt.dot(hidden3, W4) + b4
 
                 # Penalize negative values for mu with exponential dropoff based on how many negative values exist
+                # Allow some to be negative if pass the penalty mask (e.g. (1,1,0) would let the third value be negative)
                 alpha = 10  # Controls steepness; lower values make penalty increase more slowly
-                neg_values = pt.minimum(output, 0)
+                neg_values = pt.minimum(output, 0) * penalty_mask.T
                 neg_magnitude = -pt.sum(neg_values, axis=1)
                 penalty = pt.exp(-alpha * neg_magnitude)
                 pm.Potential("negative-mu-penalty", pm.math.log(penalty))
-                
-                # Input param data
-                y = pm.Data("y", self.current_y.to_numpy())
 
-                sigma = pm.HalfNormal("sigma", sigma=0.1, shape=(self.n_outputs,))
-                params = pm.TruncatedNormal("param", lower=0.0, mu=output, sigma=sigma, observed=y)
+                # TODO: make work for other configs than 3 param
+                # Testing circular
+                # Split model outputs
+                output_linear = output[:, :2]
+                #output_angle = output[:, 2]
+
+                # Split observed data
+                y_linear = pm.Data("y_linear", self.current_y.to_numpy()[:, :2])
+                #y_angle = pm.Data("y_angle", self.current_y.to_numpy()[:, 2])
+
+                # Likelihoods
+                sigma = pm.HalfNormal("sigma", sigma=0.1, shape=(2,))
+                pm.TruncatedNormal("param", lower=0.0, mu=output_linear, sigma=sigma, observed=y_linear)
+
+                # Von Mises for angle
+                #sigma_offset = pm.HalfNormal("sigma_offset", sigma=0.1, shape=(1,))
+                #kappa = 1.0 / (sigma_offset**2)
+                #pm.VonMises("offset", mu=output_angle, kappa=kappa, observed=y_angle)
         
-        def train(self, train_x, train_y, burnInCount=2000, sampleCount=5000):
+        def train(self, train_x, train_y, burnInCount=2000, sampleCount=5000, penalty_mask=None):
             self.current_x = train_x
             self.current_y = train_y
             self.n_inputs = train_x.shape[1]
             self.n_outputs = train_y.shape[1]
-            self.build_model()
+            if penalty_mask == None:
+                penalty_mask = pt.as_tensor_variable(1.0 + np.zeros(shape=(self.current_y.shape[1],)))
+            print("Penalty mask: ", penalty_mask)
+
+            self.build_model(penalty_mask=penalty_mask)
             with self.model:
 
                 az.rcParams['plot.max_subplots'] = 40
@@ -125,10 +146,9 @@ class BayesianNN:
             self.current_y = test_y
             self.n_inputs = test_x.shape[1]
             self.n_outputs = test_y.shape[1]
-            self.build_model()
+            penalty_mask = pt.as_tensor_variable(1.0 + np.zeros(shape=(self.current_y.shape[1],)))
+            self.build_model(penalty_mask=penalty_mask)
             with self.model:
-                pm.set_data({"X": test_x})
-                pm.set_data({"y": test_y})
                 self.trace = az.from_netcdf("results/" + self.name + ".nc")
                 posterior_predictive = pm.sample_posterior_predictive(self.trace)["posterior_predictive"]
             return posterior_predictive

@@ -23,7 +23,7 @@ def modelRun():
 
     cosine_count = 1
 
-    output_folder = "results/rerun-1-10k"
+    output_folder = "results/forward-model-amp-wl-20_20K-20pc-noise"
 
     # Microphone array
     SourceLocation = [-0.20049999999999987,0.21884]
@@ -91,7 +91,7 @@ def modelRun():
 
     # Generate scatter for varying amps and wavelengths
     # Only vary two for now
-    p_count = 25
+    p_count = 50
     pc_noise = 0.2
 
     def noise_sigma(s, pc):
@@ -104,8 +104,8 @@ def modelRun():
     if generate_data:
         params = []
         scatters = []
-        ampspace = np.linspace(0.0015, 0.01, p_count) #np.random.uniform(0.0, 0.01, p_count)
-        wlspace = np.linspace(0.075, 0.075, p_count)
+        ampspace = np.random.uniform(0.0015, 0.01, p_count) #np.random.uniform(0.0, 0.01, p_count)
+        wlspace = np.random.uniform(0.04, 0.2, p_count)
         for i in range(p_count):
             params.append((ampspace[i], wlspace[i], 0.0))
             
@@ -142,7 +142,7 @@ def modelRun():
     factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, SourceAngle, RecLoc, 0.02, sourceFreq)
 
     # Run the samplers and generate traces for each one
-    run_samplers = False
+    run_samplers = True
     kernel = "NUTS"
     userSamples = 700
     current_p = ""

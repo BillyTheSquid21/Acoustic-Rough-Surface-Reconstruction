@@ -179,9 +179,11 @@ class AcousticParameterMCMC:
 
             # Proposal for each set of 3 params      
             # Von Mises for now as naturally works for angles but can be slower for more dimensions
-            # I'll deal with that when this bit of code goes there         
-            wavelengths = pm.HalfNormal('wl', sigma=wlSigmas, shape=(N,), initval=wlSigmas)
-            amplitudes = pm.HalfNormal('amp', sigma=ampSigmas, shape=(N,), initval=1e-6 + pt.zeros(shape=(N,)))
+            # I'll deal with that when this bit of code goes there   
+            # 
+            # Truncate to 2.0 sigma which is equivalent to 95% of the distribution      
+            wavelengths = pm.TruncatedNormal('wl', lower=0.0, upper=2.0*wlSigmas, sigma=wlSigmas, shape=(N,), initval=wlSigmas)
+            amplitudes = pm.TruncatedNormal('amp', lower=0.0, upper=2.0*ampSigmas, sigma=ampSigmas, shape=(N,), initval=1e-6 + pt.zeros(shape=(N,)))
             phases = pm.VonMises('phase', mu=0.0, kappa=0.0, shape=(N,), initval=phase_init_vals)
 
             # Surface function with evaluated parameters
@@ -189,7 +191,7 @@ class AcousticParameterMCMC:
                 return surfaceFunction(pt.as_tensor_variable(x), amplitudes, wavelengths, phases*self._phaseScale)
 
             # Prevent label switching when wavelengths are not provided
-            wavelength_penalty = pt.sum(pt.switch(pt.ge(wavelengths[:-1], wavelengths[1:]), 0, 1e6))
+            wavelength_penalty = pt.sum(pt.switch(pt.ge(wavelengths[:-1], wavelengths[1:]), 0, -1e6))
             pm.Potential("order-penalty", wavelength_penalty)
 
             # Scatter operation which maintains symbolic links

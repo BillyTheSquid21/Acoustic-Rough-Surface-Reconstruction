@@ -89,13 +89,13 @@ if __name__ == "__main__":
     from src.SymbolicMath import GetSpecularIndices
     indices = GetSpecularIndices(SourceLocation, SourceAngle, frequency, RecLoc)
     last_indice = indices[-1]
-    for i in range(5):
+    for i in range(1,6):
         indices.append(last_indice + i)
 
     print("Indices used: ", indices)
 
-    generate_data = False
-    p_count = 25_000
+    generate_data = True
+    p_count = 5_000
     
     from src.SymbolicMath import SymRMS
     def noise_sigma(s, pc):
@@ -106,29 +106,32 @@ if __name__ == "__main__":
 
     amp_bounds = [0.0, 0.01]
     wl_bounds = [0.04, 0.2]
+    phase_bounds = [0.0, 0.0]
     if generate_data:
         params = []
         scatters = []
         ampspace = np.random.uniform(amp_bounds[0], amp_bounds[1], p_count)
         wlspace = np.random.uniform(wl_bounds[0], wl_bounds[1], p_count)
+        phasespace = np.random.uniform(phase_bounds[0], phase_bounds[1], p_count)
         pc_noise = 0.2 # 20% noise level
 
         for i in range(p_count):
-            params.append((ampspace[i], wlspace[i], 0.0))
+            params.append((ampspace[i], wlspace[i], phasespace[i]))
         
         pbar = tqdm (range(len(params)), desc="Generating param responses with noise")
         for p in pbar:
-            # Smoothness check
             def newFunction(x):
-                return SymCosineSurface(x,params[p]).copy()
+                tp = params[p]
+                tp = (tp[0],tp[1],tp[2]/(2.0*np.pi))
+                return SymCosineSurface(x,tp)
 
             an = a + np.random.normal(loc=0.0, scale=a*0.01) # Small 1% uncertainty to the aperture
 
-            KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,a,SourceAngle,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
+            KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,an,SourceAngle,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
             if not KA_Object.surfaceChecker(True, True):
                 # While the surface is not valid, keep rerolling until it is
                 while not KA_Object.surfaceChecker(True, True):
-                    params[p] = (np.random.uniform(amp_bounds[0], amp_bounds[1]), np.random.uniform(wl_bounds[0], wl_bounds[1]), 0.0)
+                    params[p] = (np.random.uniform(amp_bounds[0], amp_bounds[1]), np.random.uniform(wl_bounds[0], wl_bounds[1]), np.random.uniform(phase_bounds[0], phase_bounds[1]))
                     KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,an,SourceAngle,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
 
             s = KA_Object.Scatter(absolute=True,norm=False) / factor
@@ -147,18 +150,22 @@ if __name__ == "__main__":
         plt.legend()
         plt.show()
 
+        plt.hist(params[:, 2], bins=50, alpha=0.5, label="phase")
+        plt.legend()
+        plt.show()
+
         np.savetxt("results/amp_wl_scatter_14KHz.csv", scatters, delimiter=",")
         np.savetxt("results/amp_wl_params_14KHz.csv", params, delimiter=",")
 
-    params = np.loadtxt("results/amp_wl_params_14KHz.csv", delimiter=",")[:1000]
-    scatters = np.loadtxt("results/amp_wl_scatter_14KHz.csv", delimiter=",")[:1000]
+    params = np.loadtxt("results/amp_wl_params_14KHz.csv", delimiter=",")
+    scatters = np.loadtxt("results/amp_wl_scatter_14KHz.csv", delimiter=",")
 
-    training_data = np.column_stack((params[:,:2], scatters))
+    training_data = np.column_stack((params[:,:], scatters))
     print("Combined params and scatter responses: ", training_data.shape)
 
     # Setup training data
     # Split into test and training sets
-    columns = ['amp','wl']
+    columns = ['amp','wl','phase']
     for i in range(0, scatters.shape[1]):
         if i in indices:
             columns.append('r' + str(i))
@@ -168,7 +175,7 @@ if __name__ == "__main__":
     # X3 contains the receiver data
     # Y3 contains the parameter data
     X3_train, X3_test, Y3_train, Y3_test = train_test_split(
-        dataframe[columns[2*cosine_count:]], dataframe[columns[:2*cosine_count]], test_size=0.2, random_state=11)
+        dataframe[columns[3*cosine_count:]], dataframe[columns[:3*cosine_count]], test_size=0.2, random_state=11)
 
     print("Training params view ", Y3_train.shape, ":\n", Y3_train, "\n")
     print("Training scatter view ", X3_train.shape, ":\n", X3_train, "\n")
@@ -190,38 +197,53 @@ if __name__ == "__main__":
     plt.legend()
     plt.show()
 
+    plt.scatter(Y3_train['phase'], Y3_train['phase'], label="True values")
+    plt.scatter(Y3_train['phase'], lr.predict(X3_train)[:,2], color="red", label="Model predictions")
+    plt.legend()
+    plt.show()
+
     # Initialize and train model
-    bnn = BayesianNN(n_hidden=indices[-1]*1.5)
-    bnn.setName("amp_wl_bnn")
-    #bnn.train(X3_train, Y3_train, sampleCount=25_000, burnInCount=5_000)
-    params = np.array(bnn.predict(X3_test, Y3_test)['param']).squeeze()
+    bnn = BayesianNN(n_hidden=indices[-1]*3.0)
+    bnn.setName("amp_wl_phase_bnn")
+    # Set the penalty mask so phase is allowed to be negative
+    #bnn.train(X3_train, Y3_train, sampleCount=20_000, burnInCount=5000, penalty_mask=pt.as_tensor_variable((1.0,1.0,0.0)))
+    predict = bnn.predict(X3_test, Y3_test)
+    params = np.array(predict['param']).squeeze()
     amps = np.array(params[:,:,0])
     wls = np.array(params[:,:,1])
+    phases = np.array(predict['offset']).squeeze()
 
     amps_index = np.array(amps).squeeze()
     wls_index = np.array(wls).squeeze()
+    phases_index = np.array(phases).squeeze()
 
     # Convert to NumPy arrays
     true_amp = np.array(Y3_test["amp"])
     true_wl = np.array(Y3_test["wl"])
+    true_phase = np.array(Y3_test["phase"])
     amps_sorted = np.array(amps_index)
     wls_sorted = np.array(wls_index)
+    phases_sorted = np.array(phases_index)
 
     # Step 1: Sort indices
     sort_idx_amp = np.argsort(true_amp)
     sort_idx_wl = np.argsort(true_wl)
+    sort_idx_phase = np.argsort(true_phase)
 
     # Step 2: Sort true test
     true_amp_sorted = true_amp[sort_idx_amp]
     true_wl_sorted = true_wl[sort_idx_wl]
+    true_phase_sorted = true_phase[sort_idx_phase]
 
     # Step 3: Sort index (reordering the posterior samples)
     amps_sorted = amps_index[:, sort_idx_amp]
     wls_sorted = wls_index[:, sort_idx_wl]
+    phases_sorted = phases_index[:, sort_idx_phase]
 
     # Step 4: Compute HDI and mean again after sorting
     amps_hdi_sorted = az.hdi(amps_sorted, hdi_prob=0.68).T
     wls_hdi_sorted = az.hdi(wls_sorted, hdi_prob=0.68).T
+    phases_hdi_sorted = az.hdi(phases_sorted, hdi_prob=0.68, circular=True).T
 
     from scipy.signal import savgol_filter
     window_length = 13  # Must be odd (adjust for smoothness)
@@ -298,6 +320,157 @@ if __name__ == "__main__":
     plt.title("Predicted vs True Wavelengths with 68% HDI")
     plt.show()
 
-    print("R2 score of amp in BNN: ", r2_score(true_wl_sorted, pred_wl_sorted))
+    print("R2 score of wl in BNN: ", r2_score(true_wl_sorted, pred_wl_sorted))
 
-    print("R2 score of total BNN: ", r2_score((true_amp_sorted, true_wl_sorted), (pred_amp_sorted, pred_wl_sorted)))
+    #Phases next
+    phase_lower_hdi_sorted, phase_upper_hdi_sorted = phases_hdi_sorted
+    phase_lower_hdi_smooth = savgol_filter(phase_lower_hdi_sorted, window_length, polyorder)
+    phase_upper_hdi_smooth = savgol_filter(phase_upper_hdi_sorted, window_length, polyorder)
+    pred_phase_sorted = phases_sorted.mean(axis=0)
+
+    # Ensure phases are in radians for polar plot
+    true_phase_sorted_rad = true_phase_sorted
+    pred_phase_sorted_rad = pred_phase_sorted
+    lower_err_rad = np.abs(pred_phase_sorted_rad - phase_lower_hdi_sorted)
+    upper_err_rad = np.abs(phase_upper_hdi_sorted - pred_phase_sorted_rad)
+
+    plt.figure(figsize=(16, 9))
+
+    # Scatter plot of predicted vs true values
+    plt.errorbar(
+        true_phase_sorted, pred_phase_sorted, 
+        yerr=[lower_err, upper_err], 
+        fmt='o', label="Predicted with 68%% HDI", 
+        capsize=4, capthick=1, alpha=0.7, markersize=5
+    )
+
+    # Scatter plot of true test values
+    #plt.scatter(true_amp_sorted, pred_amp_sorted, label="amps")
+    plt.scatter(true_phase_sorted, true_phase_sorted, color='orange', label="True test set")
+
+    # Fill HDI region correctly
+    plt.fill_between(true_phase_sorted, phase_lower_hdi_smooth, phase_upper_hdi_smooth, 
+                    color='gray', alpha=0.3, label="68%% HDI")
+
+    plt.legend()
+    plt.xlabel("True Phase")
+    plt.ylabel("Predicted Phase")
+    plt.title("Predicted vs True Phase with 68% HDI")
+    plt.show()
+
+    print("R2 score of phase in BNN: ", r2_score(true_phase_sorted, pred_phase_sorted))
+
+    print("R2 score of total BNN: ", r2_score((true_amp_sorted, true_wl_sorted, true_phase_sorted), (pred_amp_sorted, pred_wl_sorted, pred_phase_sorted)))
+
+    # Reconstruct true scatter
+    from src.SymbolicMath import SymCosineSumSurface
+    from src.SymbolicMath import SymCosineSumSurface as SurfaceFunctionMulti
+    comp = [0.01260586, 0.03210286, 0.06278351, 0.05601213, 0.03996005, 0.02276676,
+        0.03520109, 0.05303403, 0.07947386, 0.06281864, 0.04293401, 0.0486769,
+        0.04348036, 0.05091185, 0.05267429, 0.05519047, 0.0744659,  0.06930464,
+        0.03456355, 0.02224533, 0.03089714, 0.02583821, 0.03186504, 0.02806474,
+        0.05334908, 0.03035023, 0.0342647,  0.0377431,  0.03844866, 0.03600139,
+        0.02590109, 0.01360588, 0.00829887, 0.00865361]
+    
+    trueScatter = comp/factor
+    p = (0.0015, 0.05, 0.0)
+
+    # Creating mean surfaces
+    print("Creating mean parameters surface")
+    x = np.linspace(0,0.6,500)
+
+    # Get predicted values
+    X3_test = np.array([trueScatter[indices[0]:indices[-1]]])
+    X3_test = pd.DataFrame(X3_test, columns=columns[3*cosine_count:])
+    Y3_test = np.array([p])
+    Y3_test = pd.DataFrame(Y3_test, columns=columns[:3*cosine_count])
+    print("Testing params view:", Y3_test.shape, "\n", Y3_test, "\n")
+    print("Testing scatter view:", X3_test.shape, "\n", X3_test, "\n")
+    predict = bnn.predict(X3_test, Y3_test)
+    params = np.array(predict['param']).squeeze()
+    print(params)
+    amps = np.array(params[:,0])
+    wls = np.array(params[:,1])
+    phases = np.array(predict['offset']).squeeze() / (2.0*np.pi)
+    posterior_samples_grouped = np.column_stack((amps, wls, phases))[:,np.newaxis,:]
+
+    hmm2 = posterior_samples_grouped.copy()
+    hmm2 = AcousticParameterMCMC.AngularMeanData(hmm2, cosine_count)
+    hmm2 = np.mean(hmm2,axis=0)
+    mean = SymCosineSumSurface(x,hmm2)
+    true = SymCosineSurface(x,p).copy()
+
+    # Creating mean of all surfaces
+    print("Creating individual surfaces")
+    surfs = []
+    x = np.linspace(0,0.6,500)
+    for _ in posterior_samples_grouped:
+        surfs.append(SymCosineSumSurface(x,_))
+
+    print("Taking mean of all combined surfaces")
+    mean_surf = np.mean(surfs,axis=0)
+
+    print("Creating HDI interval")
+    mins = []
+    maxx = []
+    for _ in range(500):
+        vals = az.hdi(np.array(surfs).T[_],hdi_prob=0.68)
+        mins.append(vals[0])
+        maxx.append(vals[1])
+
+    plt.figure(figsize = (16,9))
+    plt.grid()
+    plt.fill_between(x,mins,maxx,color='grey',alpha=0.50,label='Credible interval (68\%)')
+    plt.plot(x,mean_surf, label='Surface formed from the mean of the model surfaces')
+    plt.plot(x,mean,label='Surface formed from the mean of the model parameters')
+    plt.plot(x,true,label='True surface')
+
+    choice_count = 300
+    b = np.random.choice(range(posterior_samples_grouped.shape[0]),choice_count)
+
+    plt.xlabel("x (m)")
+    plt.ylabel("Surface elevation (m)")
+    plt.legend()
+    plt.savefig("results/" + "bnn" + " reconstruction.png")
+
+    print("Creating response plot")
+    plt.figure(figsize=(16,9))
+    plt.grid()
+    plt.plot(trueScatter)
+
+    def generate_microphone_pressure(parameters,uSamples=700):
+        def newFunction(x):
+            return SurfaceFunctionMulti(x, parameters)
+
+        KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,0.02,SourceAngle,'simp',userMinMax=[-1,1],userSamples=uSamples,absolute=False)
+        scatter = KA_Object.Scatter(absolute=True,norm=False)
+        return scatter/factor   
+    
+    for i in range(len(b)):
+        plt.plot(generate_microphone_pressure(posterior_samples_grouped[b[i]]), 'k', alpha=0.04)
+    
+    plt.xlabel("Microphone index")
+    plt.ylabel("Response")
+    plt.savefig("results/" + "bnn" + " traces.png")
+
+    import corner
+    corner.corner(np.array(posterior_samples_grouped)*np.array([100.0,100.0,2.0*np.pi]),bins=200,
+              quantiles=[0.16, 0.5, 0.84],labels=[r"A (cm)", r"$\lambda$ (cm)", r"$\phi$ (rad)"],
+              show_titles=True, title_fmt = ".4f")
+    plt.savefig("results/" + "bnn" + " corner.png")
+    plt.show()
+
+    plt.figure(figsize=(16,9))
+    font = {'family' : 'normal',
+            'weight' : 'normal',
+            'size'   : 14}
+
+    x = np.linspace(0,0.6,500)
+
+    plt.grid()
+    plt.plot(x,np.sqrt((mean-true)**2)/np.std(true),color='k',linestyle='dotted',label="Relative error of the mean of the surfaces")
+    plt.plot(x,np.sqrt((mean_surf-true)**2)/np.std(true),color='k',label="Relative error of the mean of the parameters")
+    plt.xlabel("x")
+    plt.ylabel("RSE factored by the standard deviation of the true surface")
+    plt.legend()
+    plt.show()

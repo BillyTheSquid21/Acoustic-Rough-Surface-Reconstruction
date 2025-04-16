@@ -92,7 +92,7 @@ def modelRun():
 
     userSamples = 700
     factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, SourceAngle, RecLoc, 0.02, sourceFreq)
-    pc_noise = 0.2
+    pc_noise = 0.0
     def noise_sigma(s, pc):
         '''
         Get scale of noise from rms average of the signal
@@ -109,14 +109,23 @@ def modelRun():
         scatter = np.abs(scatter)
         return scatter
     
-    #truescatter = generate_microphone_pressure(p)
+    plt.figure(figsize=(16,9))
+    plt.grid()
+    plt.plot(truescatter, color='black', label="Experimental Scattering Data")
+    kascatter = generate_microphone_pressure(p)
+    plt.plot(kascatter, color='blue', label="Kirchhoff Approximation Pressure Field of True Surface (No additive noise)")
+    plt.xlabel("Microphone Index")
+    plt.ylabel("Response")
+    plt.legend()
+    plt.savefig("results/response KA-Experimental.png")
+    plt.show()
 
     # True params
     #p = [0.0015, 0.05, 0.0]
 
     sample_count = 20_000
     burn_in_count = 20_000
-    run_model = False
+    run_model = True
     kernel = "NUTS"
     userSamples = 700
     if run_model:
