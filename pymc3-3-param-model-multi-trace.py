@@ -23,7 +23,7 @@ def modelRun():
 
     cosine_count = 1
 
-    output_folder = "results/forward-model-amp-wl-20_20K-20pc-noise"
+    output_folder = "results/hmc-amp-wl-20K_20K-5pc-noise"
 
     # Microphone array
     SourceLocation = [-0.20049999999999987,0.21884]
@@ -92,7 +92,7 @@ def modelRun():
     # Generate scatter for varying amps and wavelengths
     # Only vary two for now
     p_count = 50
-    pc_noise = 0.2
+    pc_noise = 0.05
 
     def noise_sigma(s, pc):
         '''
@@ -100,19 +100,39 @@ def modelRun():
         '''
         return (SymRMS(np.array(s)))*pc
 
-    generate_data = True
+    amp_bounds = [0.001, 0.0045]
+    wl_bounds = [0.04, 0.15]
+    phase_bounds = [0.0, 0.0]
+    frequency=sourceFreq
+    generate_data = False
     if generate_data:
         params = []
         scatters = []
-        ampspace = np.random.uniform(0.0015, 0.01, p_count) #np.random.uniform(0.0, 0.01, p_count)
-        wlspace = np.random.uniform(0.04, 0.2, p_count)
+        ampspace = np.random.uniform(amp_bounds[0], amp_bounds[1], p_count)
+        wlspace = np.random.uniform(wl_bounds[0], wl_bounds[1], p_count)
+        phasespace = np.random.uniform(phase_bounds[0], phase_bounds[1], p_count)
+        pc_noise = 0.05 # 20% noise level
+
         for i in range(p_count):
-            params.append((ampspace[i], wlspace[i], 0.0))
-            
-        np.savetxt(output_folder + "/data/amp_wl_phase_params_14KHz.csv", params, delimiter=",")
+            params.append((ampspace[i], wlspace[i], phasespace[i]))
         
-        for p in tqdm (range(len(params)), desc="Generating param responses with noise"):
-            s = generate_microphone_pressure(params[p])
+        pbar = tqdm (range(len(params)), desc="Generating param responses with noise")
+        for p in pbar:
+            def newFunction(x):
+                tp = params[p]
+                tp = (tp[0],tp[1],tp[2])
+                return SymCosineSurface(x,tp)
+
+            an = 0.02
+
+            KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,an,SourceAngle,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
+            if not KA_Object.surfaceChecker(True, True):
+                # While the surface is not valid, keep rerolling until it is
+                while not KA_Object.surfaceChecker(True, True):
+                    params[p] = (np.random.uniform(amp_bounds[0], amp_bounds[1]), np.random.uniform(wl_bounds[0], wl_bounds[1]), np.random.uniform(phase_bounds[0], phase_bounds[1]))
+                    KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,an,SourceAngle,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
+
+            s = KA_Object.Scatter(absolute=True,norm=False) / factor
             s += np.random.normal(loc=0.0, scale=noise_sigma(s, pc_noise), size=(34,))
             s = np.abs(s)
             scatters.append(s)
@@ -131,8 +151,10 @@ def modelRun():
         plt.legend()
         plt.show()
 
-        plt.scatter(params[:, 1], params[:, 1])
+        plt.hist(params[:, 2], bins=50, alpha=0.5, label="phase")
+        plt.legend()
         plt.show()
+
         np.savetxt(output_folder + "/data/amp_wl_phase_scatter_14KHz.csv", scatters, delimiter=",")
 
     params = np.loadtxt(output_folder + "/data/amp_wl_phase_params_14KHz.csv", delimiter=",")
@@ -142,7 +164,7 @@ def modelRun():
     factor = AcousticParameterMCMC.GenerateFactor(SourceLocation, SourceAngle, RecLoc, 0.02, sourceFreq)
 
     # Run the samplers and generate traces for each one
-    run_samplers = True
+    run_samplers = False
     kernel = "NUTS"
     userSamples = 700
     current_p = ""
@@ -259,7 +281,7 @@ def modelRun():
 
     # Scatter plot of predicted vs true values
     plt.errorbar(
-        true_amp, pred_wl_sorted, 
+        true_wl, pred_wl_sorted, 
         yerr=[lower_err, upper_err], 
         fmt='o', label="Predicted with 68\% HDI", 
         capsize=4, capthick=1, alpha=0.7, markersize=5
@@ -267,16 +289,16 @@ def modelRun():
 
     # Scatter plot of true test values
     #plt.scatter(true_amp, pred_wl_sorted, label="wls")
-    plt.scatter(true_amp, true_wl, color='orange', label="True test set")
+    plt.scatter(true_wl, true_wl, color='orange', label="True test set")
 
     # Fill HDI region correctly
     #plt.fill_between(true_amp, amp_lower_hdi_smooth, amp_upper_hdi_smooth, 
     #                color='gray', alpha=0.3, label="68%% HDI")
 
     plt.legend()
-    plt.xlabel("True Amplitude")
+    plt.xlabel("True Wavelength")
     plt.ylabel("Predicted Wavelength")
-    plt.title("Predicted Wavelength vs True Amplitude with 68\% HDI")
+    plt.title("Predicted Wavelength vs True Wavelength with 68\% HDI")
     plt.show()
 
     print("R2 score of amp in BNN: ", r2_score(true_wl, pred_wl_sorted))

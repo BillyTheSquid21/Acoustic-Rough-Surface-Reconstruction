@@ -49,24 +49,12 @@ class BayesianNN:
                 penalty = pt.exp(-alpha * neg_magnitude)
                 pm.Potential("negative-mu-penalty", pm.math.log(penalty))
 
-                # TODO: make work for other configs than 3 param
-                # Testing circular
-                # Split model outputs
-                output_linear = output[:, :2]
-                #output_angle = output[:, 2]
-
                 # Split observed data
-                y_linear = pm.Data("y_linear", self.current_y.to_numpy()[:, :2])
-                #y_angle = pm.Data("y_angle", self.current_y.to_numpy()[:, 2])
+                y_linear = pm.Data("y_linear", self.current_y.to_numpy())
 
                 # Likelihoods
-                sigma = pm.HalfNormal("sigma", sigma=0.1, shape=(2,))
-                pm.TruncatedNormal("param", lower=0.0, mu=output_linear, sigma=sigma, observed=y_linear)
-
-                # Von Mises for angle
-                #sigma_offset = pm.HalfNormal("sigma_offset", sigma=0.1, shape=(1,))
-                #kappa = 1.0 / (sigma_offset**2)
-                #pm.VonMises("offset", mu=output_angle, kappa=kappa, observed=y_angle)
+                sigma = pm.HalfNormal("sigma", sigma=0.1, shape=(self.n_outputs,))
+                pm.TruncatedNormal("param", lower=(0.0,0.0,-10.0), mu=output, sigma=sigma, observed=y_linear)
         
         def train(self, train_x, train_y, burnInCount=2000, sampleCount=5000, penalty_mask=None):
             self.current_x = train_x
@@ -94,42 +82,6 @@ class BayesianNN:
 
                 self.trace = pm.sample(draws=sampleCount, tune=burnInCount, chains=1, nuts_sampler="numpyro", return_inferencedata=True)
                 self.trace.to_netcdf("results/" + self.name + ".nc")
-
-                az.plot_trace(self.trace, var_names=["W1"], divergences=False, compact=False, combined=False)
-                fig = plt.gcf()
-                fig.tight_layout()
-                fig.subplots_adjust(hspace=0.5, wspace=0.3)
-                plt.savefig("results/" + self.name + "_w1_trace.png")
-
-                az.plot_trace(self.trace, var_names=["b1"], divergences=False, compact=False, combined=False)
-                fig = plt.gcf()
-                fig.tight_layout()
-                fig.subplots_adjust(hspace=0.5, wspace=0.3)
-                plt.savefig("results/" + self.name + "_b1_trace.png")
-
-                az.plot_trace(self.trace, var_names=["W2"], divergences=False, compact=False, combined=False)
-                fig = plt.gcf()
-                fig.tight_layout()
-                fig.subplots_adjust(hspace=0.5, wspace=0.3)
-                plt.savefig("results/" + self.name + "_w2_trace.png")
-
-                az.plot_trace(self.trace, var_names=["b2"], divergences=False, compact=False, combined=False)
-                fig = plt.gcf()
-                fig.tight_layout()
-                fig.subplots_adjust(hspace=0.5, wspace=0.3)
-                plt.savefig("results/" + self.name + "_b2_trace.png")
-
-                az.plot_trace(self.trace, var_names=["W3"], divergences=False, compact=False, combined=False)
-                fig = plt.gcf()
-                fig.tight_layout()
-                fig.subplots_adjust(hspace=0.5, wspace=0.3)
-                plt.savefig("results/" + self.name + "_w3_trace.png")
-
-                az.plot_trace(self.trace, var_names=["b3"], divergences=False, compact=False, combined=False)
-                fig = plt.gcf()
-                fig.tight_layout()
-                fig.subplots_adjust(hspace=0.5, wspace=0.3)
-                plt.savefig("results/" + self.name + "_b3_trace.png")
 
                 summary = az.summary(self.trace)
                 print(summary)

@@ -172,7 +172,6 @@ class AcousticParameterMCMC:
         ampSigmas = self.getAmplitudeProposal()
         wlSigmas = self.getWavelengthProposal()
 
-        phase_init_vals = np.linspace(1e-6, 2.0*np.pi, N+1)[:N]
         cov_matrix = np.eye(len(factorizedScatter[indices[0]:indices[-1]])) * self._error
         chol = np.linalg.cholesky(cov_matrix)
         with pm.Model() as model:
@@ -184,7 +183,7 @@ class AcousticParameterMCMC:
             # Truncate to 2.0 sigma which is equivalent to 95% of the distribution      
             wavelengths = pm.TruncatedNormal('wl', lower=0.0, upper=2.0*wlSigmas, sigma=wlSigmas, shape=(N,), initval=wlSigmas)
             amplitudes = pm.TruncatedNormal('amp', lower=0.0, upper=2.0*ampSigmas, sigma=ampSigmas, shape=(N,), initval=1e-6 + pt.zeros(shape=(N,)))
-            phases = pm.VonMises('phase', mu=0.0, kappa=0.0, shape=(N,), initval=phase_init_vals)
+            phases = pm.VonMises('phase', mu=0.0, kappa=0.0, shape=(N,), initval=1e-6 + pt.zeros(shape=(N,)))
 
             # Surface function with evaluated parameters
             def newFunction(x):

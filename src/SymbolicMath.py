@@ -40,50 +40,54 @@ def GetSpecularIndices(sourceLocation, sourceAngle, sourceFreq, receiverLoc):
     # Get point where directivity intersects
     specpoint = sourceLocation[0] + sourceLocation[1]*np.tan((np.pi/2)-sourceAngle)
 
-    # Get Half Power Beam Width
-    k = (2*np.pi*sourceFreq)/343
-    a = 0.02
-    hpbw = HalfPowerBeamWidth(k, a)
-    #print(f"Half-Power Beam Width: {np.degrees(hpbw):.2f} degrees")
-
     # Work out spread based on width of node
     # 1st method: from angle work out width of lobe at spec point
     specdist = (np.array(sourceLocation) - specpoint)
     specdist = np.sqrt(specdist.dot(specdist))
-    specspread = (specdist * (np.sin(hpbw/2))) / (np.sin(np.pi-sourceAngle-(hpbw/2)))
+
+    # Get Half Power Beam Width
+    k = (2*np.pi*sourceFreq)/343
+    a = 0.02
+    hpbw = HalfPowerBeamWidth(k, a, specdist)
+    print("Half Power Beam Width: ", hpbw*(180.0/np.pi), " degrees")
+
+    specspread_left = (specdist * (np.sin(hpbw/2))) / (np.sin(np.pi-sourceAngle-(hpbw/2)))
+    specspread_right = (specdist * (np.sin(hpbw/2))) / (np.sin(sourceAngle-(hpbw/2)))
     #print("Specular point distance: ", specdist)
     #print("Specular spread: ", specspread)
 
     indices = []
     for i in range(len(receiverLoc)):
         rspec = get_spec_point(sourceLocation, receiverLoc[i])
-        if rspec > specpoint - specspread and rspec < specpoint + specspread:
+        if rspec > specpoint - specspread_left and rspec < specpoint + specspread_right:
             indices.append(i)
     return indices
 
-def AcousticSourceDirectivity(theta, k, a):
+def AcousticSourceDirectivity(theta, k, a, dist):
     '''
     Directivity function for the microphones
     '''
-    d = (sp.special.jn(1,k*a*np.sin(theta)))/(k*a*np.sin(theta))
-    if math.isnan(d):
-        return 0.5
-    return d
+    # https://homepages.uc.edu/~masttd/papers/2005_jasa_piston.pdf equation 20
+    d = -1j*k*(a**2)*(sp.special.jn(1,k*a*np.sin(theta)))/(k*a*np.sin(theta)) * ((np.e**(1j*k*dist))/dist)
+    return np.abs(d*(dist*(np.e**(-1j*k*dist))))
 
-def HalfPowerBeamWidth(k, a):
+def HalfPowerBeamWidth(k, a, dist):
     '''
     Half Power Beam Width function for the lobe width
     '''
-    max_directivity = AcousticSourceDirectivity(0, k, a)
-    half_power = max_directivity / 2
-        
-    # Function to find root where directivity equals half-power
-    def equation(theta):
-        return AcousticSourceDirectivity(theta, k, a) - half_power
-        
-    # Search for HPBW in the range [0, π/2]
-    theta1 = bisect(equation, 0, np.pi/2)
-    return 2 * theta1  # HPBW is the total width
+    max_directivity = AcousticSourceDirectivity(0.001, k, a, dist)
+    half_power = max_directivity * (1/np.sqrt(2)) # Power is square of intensity, so when is down by 1/root2
+
+    # Move out from center until directivity <= half_power
+    # Only do 180 degree sweep
+    hpbw = np.pi
+    for i in range(1,180):
+        theta = float(i)*(np.pi/180.0)
+        d = AcousticSourceDirectivity(theta, k, a, dist)
+        if d <= half_power:
+            hpbw = float(theta)*2.0
+            break
+    return hpbw
 
 def SymRandomSurface(beta, x, t, velocity, depth, lM, lm, aw = 1e-3):
   '''

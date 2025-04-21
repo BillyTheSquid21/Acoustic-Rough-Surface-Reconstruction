@@ -89,12 +89,14 @@ if __name__ == "__main__":
     from src.SymbolicMath import GetSpecularIndices
     indices = GetSpecularIndices(SourceLocation, SourceAngle, frequency, RecLoc)
     last_indice = indices[-1]
-    for i in range(6):
+    additional_indice = last_indice*1.2
+    di = int(additional_indice)-last_indice
+    for i in range(1, di):
         indices.append(last_indice + i)
 
     print("Indices used: ", indices)
 
-    generate_data = True
+    generate_data = False
     p_count = 25_000
     
     from src.SymbolicMath import SymRMS
@@ -106,12 +108,12 @@ if __name__ == "__main__":
 
     amp_bounds = [0.0, 0.01]
     wl_bounds = [0.04, 0.2]
+    pc_noise = 0.05
     if generate_data:
         params = []
         scatters = []
         ampspace = np.random.uniform(amp_bounds[0], amp_bounds[1], p_count)
         wlspace = np.random.uniform(wl_bounds[0], wl_bounds[1], p_count)
-        pc_noise = 0.05
 
         for i in range(p_count):
             params.append((ampspace[i], wlspace[i], 0.0))
@@ -150,8 +152,8 @@ if __name__ == "__main__":
         np.savetxt("results/amp_wl_scatter_14KHz.csv", scatters, delimiter=",")
         np.savetxt("results/amp_wl_params_14KHz.csv", params, delimiter=",")
 
-    params = np.loadtxt("results/amp_wl_params_14KHz.csv", delimiter=",")
-    scatters = np.loadtxt("results/amp_wl_scatter_14KHz.csv", delimiter=",")
+    params = np.loadtxt("results/amp_wl_params_14KHz.csv", delimiter=",")[:1000]
+    scatters = np.loadtxt("results/amp_wl_scatter_14KHz.csv", delimiter=",")[:1000]
 
     training_data = np.column_stack((params[:,:2], scatters))
     print("Combined params and scatter responses: ", training_data.shape)
@@ -191,9 +193,9 @@ if __name__ == "__main__":
     plt.show()
 
     # Initialize and train model
-    bnn = BayesianNN(n_hidden=25)
+    bnn = BayesianNN(n_hidden=1.5*indices[-1])
     bnn.setName("amp_wl_bnn")
-    bnn.train(X3_train, Y3_train, sampleCount=25_000, burnInCount=5_000)
+    #bnn.train(X3_train, Y3_train, sampleCount=20_000, burnInCount=5_000)
     params = np.array(bnn.predict(X3_test, Y3_test)['param']).squeeze()
     amps = np.array(params[:,:,0])
     wls = np.array(params[:,:,1])
@@ -224,8 +226,8 @@ if __name__ == "__main__":
     wls_hdi_sorted = az.hdi(wls_sorted, hdi_prob=0.68).T
 
     from scipy.signal import savgol_filter
-    window_length = 13  # Must be odd (adjust for smoothness)
-    polyorder = 2  # Polynomial order for fitting
+    window_length = 101  # Must be odd (adjust for smoothness)
+    polyorder = 4  # Polynomial order for fitting
 
     # Amps first
     amp_lower_hdi_sorted, amp_upper_hdi_sorted = amps_hdi_sorted
@@ -233,32 +235,40 @@ if __name__ == "__main__":
     amp_upper_hdi_smooth = savgol_filter(amp_upper_hdi_sorted, window_length, polyorder)
     pred_amp_sorted = amps_sorted.mean(axis=0)
 
-    lower_err = pred_amp_sorted - amp_lower_hdi_sorted
-    upper_err = amp_upper_hdi_sorted - pred_amp_sorted
+    lower_err = np.abs(pred_amp_sorted - amp_lower_hdi_sorted)
+    upper_err = np.abs(amp_upper_hdi_sorted - pred_amp_sorted)
 
     # Step 5: Plot with correctly sorted data
     plt.figure(figsize=(16, 9))
 
+    # Randomly select 1000 subset
+    amp_inds_sub = np.random.choice(sort_idx_amp, size=250)
+    tas_sub = true_amp_sorted[amp_inds_sub]
+    pas_sub = pred_amp_sorted[amp_inds_sub]
+    le_sub = lower_err[amp_inds_sub]
+    ue_sub = upper_err[amp_inds_sub]
+
     # Scatter plot of predicted vs true values
     plt.errorbar(
-        true_amp_sorted, pred_amp_sorted, 
-        yerr=[lower_err, upper_err], 
-        fmt='o', label="Predicted with 68%% HDI", 
-        capsize=4, capthick=1, alpha=0.7, markersize=5
+        tas_sub, pas_sub, 
+        yerr=[le_sub, ue_sub], 
+        fmt='o', label="Predicted with 68\% HDI", 
+        capsize=4, capthick=1, alpha=0.6, markersize=5
     )
 
     # Scatter plot of true test values
     #plt.scatter(true_amp_sorted, pred_amp_sorted, label="amps")
-    plt.scatter(true_amp_sorted, true_amp_sorted, color='orange', label="True test set")
+    plt.plot(true_amp_sorted, true_amp_sorted, color='orange', label="True test set")
 
     # Fill HDI region correctly
     plt.fill_between(true_amp_sorted, amp_lower_hdi_smooth, amp_upper_hdi_smooth, 
-                    color='gray', alpha=0.3, label="68%% HDI")
+                    color='gray', alpha=0.5, label="68\% HDI")
 
     plt.legend()
     plt.xlabel("True Amplitude")
     plt.ylabel("Predicted Amplitude")
-    plt.title("Predicted vs True Amplitudes with 68% HDI")
+    plt.title("Predicted vs True Amplitudes with 68\% HDI")
+    plt.savefig("results/bnn-amp-wl-pred-amp-" + str(pc_noise) + ".png")
     plt.show()
 
     from sklearn.metrics import r2_score
@@ -276,29 +286,37 @@ if __name__ == "__main__":
     # Step 5: Plot with correctly sorted data
     plt.figure(figsize=(16, 9))
 
+    # Take subset
+    wl_inds_sub = np.random.choice(sort_idx_wl, size=250)
+    tws_sub = true_wl_sorted[wl_inds_sub]
+    pws_sub = pred_wl_sorted[wl_inds_sub]
+    le_sub = np.abs(lower_err[wl_inds_sub])
+    ue_sub = np.abs(upper_err[wl_inds_sub])
+
     # Scatter plot of predicted vs true values
     plt.errorbar(
-        true_wl_sorted, pred_wl_sorted, 
-        yerr=[lower_err, upper_err], 
-        fmt='o', label="Predicted with 68%% HDI", 
-        capsize=4, capthick=1, alpha=0.7, markersize=5
+        tws_sub, pws_sub, 
+        yerr=[le_sub, ue_sub], 
+        fmt='o', label="Predicted with 68\% HDI", 
+        capsize=4, capthick=1, alpha=0.6, markersize=5
     )
 
     # Scatter plot of true test values
     #plt.scatter(true_amp_sorted, pred_amp_sorted, label="amps")
-    plt.scatter(true_wl_sorted, true_wl_sorted, color='orange', label="True test set")
+    plt.plot(true_wl_sorted, true_wl_sorted, color='orange', label="True test set")
 
     # Fill HDI region correctly
     plt.fill_between(true_wl_sorted, wl_lower_hdi_smooth, wl_upper_hdi_smooth, 
-                    color='gray', alpha=0.3, label="68%% HDI")
+                    color='gray', alpha=0.5, label="68\% HDI")
 
     plt.legend()
     plt.xlabel("True Wavelength")
     plt.ylabel("Predicted Wavelength")
-    plt.title("Predicted vs True Wavelengths with 68% HDI")
+    plt.title("Predicted vs True Wavelengths with 68\% HDI")
+    plt.savefig("results/bnn-amp-wl-pred-wl-" + str(pc_noise) + ".png")
     plt.show()
 
-    print("R2 score of amp in BNN: ", r2_score(true_wl_sorted, pred_wl_sorted))
+    print("R2 score of wl in BNN: ", r2_score(true_wl_sorted, pred_wl_sorted))
 
     print("R2 score of total BNN: ", r2_score((true_amp_sorted, true_wl_sorted), (pred_amp_sorted, pred_wl_sorted)))
 
@@ -312,8 +330,12 @@ if __name__ == "__main__":
         0.05334908, 0.03035023, 0.0342647,  0.0377431,  0.03844866, 0.03600139,
         0.02590109, 0.01360588, 0.00829887, 0.00865361]
     
-    trueScatter = comp/factor
+    trueScatter = comp/(1.0*factor)
+    plt.plot(trueScatter[:18])
     p = (0.0015, 0.05, 0.0)
+    trueScatter = generate_microphone_pressure(p)[:18]
+    plt.plot(trueScatter)
+    plt.show()
 
     # Creating mean surfaces
     print("Creating mean parameters surface")

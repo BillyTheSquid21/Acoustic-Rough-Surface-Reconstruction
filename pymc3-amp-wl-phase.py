@@ -89,13 +89,13 @@ if __name__ == "__main__":
     from src.SymbolicMath import GetSpecularIndices
     indices = GetSpecularIndices(SourceLocation, SourceAngle, frequency, RecLoc)
     last_indice = indices[-1]
-    for i in range(1,6):
+    for i in range(1,3):
         indices.append(last_indice + i)
 
     print("Indices used: ", indices)
 
-    generate_data = True
-    p_count = 5_000
+    generate_data = False
+    p_count = 25_000
     
     from src.SymbolicMath import SymRMS
     def noise_sigma(s, pc):
@@ -106,14 +106,14 @@ if __name__ == "__main__":
 
     amp_bounds = [0.0, 0.01]
     wl_bounds = [0.04, 0.2]
-    phase_bounds = [0.0, 0.0]
+    phase_bounds = [-0.5, 0.5]
     if generate_data:
         params = []
         scatters = []
         ampspace = np.random.uniform(amp_bounds[0], amp_bounds[1], p_count)
         wlspace = np.random.uniform(wl_bounds[0], wl_bounds[1], p_count)
         phasespace = np.random.uniform(phase_bounds[0], phase_bounds[1], p_count)
-        pc_noise = 0.2 # 20% noise level
+        pc_noise = 0.05 # 20% noise level
 
         for i in range(p_count):
             params.append((ampspace[i], wlspace[i], phasespace[i]))
@@ -122,7 +122,7 @@ if __name__ == "__main__":
         for p in pbar:
             def newFunction(x):
                 tp = params[p]
-                tp = (tp[0],tp[1],tp[2]/(2.0*np.pi))
+                tp = (tp[0],tp[1],tp[2])
                 return SymCosineSurface(x,tp)
 
             an = a + np.random.normal(loc=0.0, scale=a*0.01) # Small 1% uncertainty to the aperture
@@ -154,11 +154,11 @@ if __name__ == "__main__":
         plt.legend()
         plt.show()
 
-        np.savetxt("results/amp_wl_scatter_14KHz.csv", scatters, delimiter=",")
-        np.savetxt("results/amp_wl_params_14KHz.csv", params, delimiter=",")
+        np.savetxt("results/amp_wl_phase_scatter_14KHz.csv", scatters, delimiter=",")
+        np.savetxt("results/amp_wl_phase_params_14KHz.csv", params, delimiter=",")
 
-    params = np.loadtxt("results/amp_wl_params_14KHz.csv", delimiter=",")
-    scatters = np.loadtxt("results/amp_wl_scatter_14KHz.csv", delimiter=",")
+    params = np.loadtxt("results/amp_wl_phase_params_14KHz.csv", delimiter=",")
+    scatters = np.loadtxt("results/amp_wl_phase_scatter_14KHz.csv", delimiter=",")
 
     training_data = np.column_stack((params[:,:], scatters))
     print("Combined params and scatter responses: ", training_data.shape)
@@ -203,7 +203,7 @@ if __name__ == "__main__":
     plt.show()
 
     # Initialize and train model
-    bnn = BayesianNN(n_hidden=indices[-1]*3.0)
+    bnn = BayesianNN(n_hidden=indices[-1]*1.5)
     bnn.setName("amp_wl_phase_bnn")
     # Set the penalty mask so phase is allowed to be negative
     #bnn.train(X3_train, Y3_train, sampleCount=20_000, burnInCount=5000, penalty_mask=pt.as_tensor_variable((1.0,1.0,0.0)))
@@ -211,7 +211,7 @@ if __name__ == "__main__":
     params = np.array(predict['param']).squeeze()
     amps = np.array(params[:,:,0])
     wls = np.array(params[:,:,1])
-    phases = np.array(predict['offset']).squeeze()
+    phases = np.array(params[:,:,2])*2.0*np.pi
 
     amps_index = np.array(amps).squeeze()
     wls_index = np.array(wls).squeeze()
@@ -243,11 +243,11 @@ if __name__ == "__main__":
     # Step 4: Compute HDI and mean again after sorting
     amps_hdi_sorted = az.hdi(amps_sorted, hdi_prob=0.68).T
     wls_hdi_sorted = az.hdi(wls_sorted, hdi_prob=0.68).T
-    phases_hdi_sorted = az.hdi(phases_sorted, hdi_prob=0.68, circular=True).T
+    phases_hdi_sorted = az.hdi(phases_sorted, hdi_prob=0.68).T
 
     from scipy.signal import savgol_filter
-    window_length = 13  # Must be odd (adjust for smoothness)
-    polyorder = 2  # Polynomial order for fitting
+    window_length = 101  # Must be odd (adjust for smoothness)
+    polyorder = 4  # Polynomial order for fitting
 
     # Amps first
     amp_lower_hdi_sorted, amp_upper_hdi_sorted = amps_hdi_sorted
@@ -262,25 +262,30 @@ if __name__ == "__main__":
     plt.figure(figsize=(16, 9))
 
     # Scatter plot of predicted vs true values
+    amp_inds_sub = np.random.choice(sort_idx_amp, size=250)
+    tas_sub = true_amp_sorted[amp_inds_sub]
+    pas_sub = pred_amp_sorted[amp_inds_sub]
+    le_sub = lower_err[amp_inds_sub]
+    ue_sub = upper_err[amp_inds_sub]
     plt.errorbar(
-        true_amp_sorted, pred_amp_sorted, 
-        yerr=[lower_err, upper_err], 
-        fmt='o', label="Predicted with 68%% HDI", 
+        tas_sub, pas_sub, 
+        yerr=[le_sub, ue_sub], 
+        fmt='o', label="Predicted with 68\% HDI", 
         capsize=4, capthick=1, alpha=0.7, markersize=5
     )
 
     # Scatter plot of true test values
     #plt.scatter(true_amp_sorted, pred_amp_sorted, label="amps")
-    plt.scatter(true_amp_sorted, true_amp_sorted, color='orange', label="True test set")
+    plt.plot(true_amp_sorted, true_amp_sorted, color='orange', label="True test set")
 
     # Fill HDI region correctly
     plt.fill_between(true_amp_sorted, amp_lower_hdi_smooth, amp_upper_hdi_smooth, 
-                    color='gray', alpha=0.3, label="68%% HDI")
+                    color='gray', alpha=0.3, label="68\% HDI")
 
     plt.legend()
     plt.xlabel("True Amplitude")
     plt.ylabel("Predicted Amplitude")
-    plt.title("Predicted vs True Amplitudes with 68% HDI")
+    plt.title("Predicted vs True Amplitudes with 68\% HDI")
     plt.show()
 
     from sklearn.metrics import r2_score
@@ -299,25 +304,30 @@ if __name__ == "__main__":
     plt.figure(figsize=(16, 9))
 
     # Scatter plot of predicted vs true values
+    wl_inds_sub = np.random.choice(sort_idx_wl, size=250)
+    tws_sub = true_wl_sorted[wl_inds_sub]
+    pws_sub = pred_wl_sorted[wl_inds_sub]
+    lew_sub = lower_err[wl_inds_sub]
+    uew_sub = upper_err[wl_inds_sub]
     plt.errorbar(
-        true_wl_sorted, pred_wl_sorted, 
-        yerr=[lower_err, upper_err], 
-        fmt='o', label="Predicted with 68%% HDI", 
+        tws_sub, pws_sub, 
+        yerr=[lew_sub, uew_sub], 
+        fmt='o', label="Predicted with 68\% HDI", 
         capsize=4, capthick=1, alpha=0.7, markersize=5
     )
 
     # Scatter plot of true test values
     #plt.scatter(true_amp_sorted, pred_amp_sorted, label="amps")
-    plt.scatter(true_wl_sorted, true_wl_sorted, color='orange', label="True test set")
+    plt.plot(true_wl_sorted, true_wl_sorted, color='orange', label="True test set")
 
     # Fill HDI region correctly
     plt.fill_between(true_wl_sorted, wl_lower_hdi_smooth, wl_upper_hdi_smooth, 
-                    color='gray', alpha=0.3, label="68%% HDI")
+                    color='gray', alpha=0.3, label="68\% HDI")
 
     plt.legend()
     plt.xlabel("True Wavelength")
     plt.ylabel("Predicted Wavelength")
-    plt.title("Predicted vs True Wavelengths with 68% HDI")
+    plt.title("Predicted vs True Wavelengths with 68\% HDI")
     plt.show()
 
     print("R2 score of wl in BNN: ", r2_score(true_wl_sorted, pred_wl_sorted))
@@ -331,31 +341,44 @@ if __name__ == "__main__":
     # Ensure phases are in radians for polar plot
     true_phase_sorted_rad = true_phase_sorted
     pred_phase_sorted_rad = pred_phase_sorted
+    phase_lower_hdi_smooth_rad = phase_lower_hdi_smooth
+    phase_upper_hdi_smooth_rad = phase_upper_hdi_smooth
     lower_err_rad = np.abs(pred_phase_sorted_rad - phase_lower_hdi_sorted)
     upper_err_rad = np.abs(phase_upper_hdi_sorted - pred_phase_sorted_rad)
+    
+    phase_inds_sub = np.random.choice(sort_idx_phase, size=250)
+    tpsr_sub = true_phase_sorted_rad[phase_inds_sub]
+    ppsr_sub = pred_phase_sorted_rad[phase_inds_sub]
+    ler_sub = lower_err_rad[phase_inds_sub]
+    uer_sub = upper_err_rad[phase_inds_sub]
 
+    # Step 5: Plot with correctly sorted data
     plt.figure(figsize=(16, 9))
 
     # Scatter plot of predicted vs true values
     plt.errorbar(
-        true_phase_sorted, pred_phase_sorted, 
-        yerr=[lower_err, upper_err], 
-        fmt='o', label="Predicted with 68%% HDI", 
+        tpsr_sub, ppsr_sub, 
+        yerr=[lew_sub, uew_sub], 
+        fmt='o', label="Predicted with 68\% HDI", 
         capsize=4, capthick=1, alpha=0.7, markersize=5
     )
 
     # Scatter plot of true test values
     #plt.scatter(true_amp_sorted, pred_amp_sorted, label="amps")
-    plt.scatter(true_phase_sorted, true_phase_sorted, color='orange', label="True test set")
+    plt.plot(true_phase_sorted_rad, true_phase_sorted_rad, color='orange', label="True test set")
 
     # Fill HDI region correctly
-    plt.fill_between(true_phase_sorted, phase_lower_hdi_smooth, phase_upper_hdi_smooth, 
-                    color='gray', alpha=0.3, label="68%% HDI")
+    plt.fill_between(true_phase_sorted_rad, phase_lower_hdi_smooth, phase_upper_hdi_smooth, 
+                    color='gray', alpha=0.3, label="68\% HDI")
 
     plt.legend()
-    plt.xlabel("True Phase")
-    plt.ylabel("Predicted Phase")
-    plt.title("Predicted vs True Phase with 68% HDI")
+    plt.xlabel("True Offset")
+    plt.ylabel("Predicted Offset")
+    plt.title("Predicted vs True Offset with 68\% HDI")
+    plt.show()
+
+    plt.hist(pred_phase_sorted_rad, bins=50, alpha=0.5, label="phase")
+    plt.legend()
     plt.show()
 
     print("R2 score of phase in BNN: ", r2_score(true_phase_sorted, pred_phase_sorted))
@@ -391,7 +414,7 @@ if __name__ == "__main__":
     print(params)
     amps = np.array(params[:,0])
     wls = np.array(params[:,1])
-    phases = np.array(predict['offset']).squeeze() / (2.0*np.pi)
+    phases = np.array(params[:,2])
     posterior_samples_grouped = np.column_stack((amps, wls, phases))[:,np.newaxis,:]
 
     hmm2 = posterior_samples_grouped.copy()
