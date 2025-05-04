@@ -123,8 +123,8 @@ def modelRun():
     # True params
     #p = [0.0015, 0.05, 0.0]
 
-    sample_count = 20_000
-    burn_in_count = 20_000
+    sample_count = 25_000
+    burn_in_count = 25_000
     run_model = True
     kernel = "NUTS"
     userSamples = 700
@@ -153,6 +153,8 @@ def modelRun():
         
         mcmc.plotTrace()
     
+    plt.rcParams.update({'font.size': 18})
+
     # Convert each row into 3-element tuples for better multi
     posterior_samples_grouped = np.array(AcousticParameterMCMC.LoadCSVData("results/" + kernel + ".csv"))
 
@@ -188,25 +190,31 @@ def modelRun():
         mins.append(vals[0])
         maxx.append(vals[1])
 
-    plt.figure(figsize = (16,9))
-    plt.grid()
-    plt.fill_between(x,mins,maxx,color='grey',alpha=0.50,label='Credible interval (68\%)')
-    plt.plot(x,mean_surf, label='Surface formed from the mean of the model surfaces')
-    plt.plot(x,mean,label='Surface formed from the mean of the model parameters')
-    plt.plot(x,true,label='True surface')
+    plt.figure(figsize = (16,6))
+    plt.grid(which='both')
+    plt.grid(which='minor', alpha=0.4)
+    plt.grid(which='major', alpha=0.75)
+    plt.fill_between(x,mins,maxx,color='#ffffbf',label='Credible interval (68\%)')
+    plt.plot(x, mins, color='black', linewidth=0.75)  # Lower boundary
+    plt.plot(x, maxx, color='black', linewidth=0.75)  # Upper boundary
+    plt.plot(x,mean_surf, color="#2c7bb6", linestyle="dashed", label='Surface formed from the mean of the model surfaces')
+    plt.plot(x,mean, color="#2c7bb6",label='Surface formed from the mean of the model parameters')
+    plt.plot(x,true, color="#d7191c",label='True surface')
 
     choice_count = 300
     b = np.random.choice(range(sample_count),choice_count)
 
     plt.xlabel("x (m)")
     plt.ylabel("Surface elevation (m)")
-    plt.legend()
+    #plt.legend()
     plt.savefig("results/" + kernel.lower() + " reconstruction.png")
 
     print("Creating response plot")
-    plt.figure(figsize=(16,9))
-    plt.grid()
-    plt.plot(truescatter)
+    plt.figure(figsize=(16,6))
+    plt.grid(which='both')
+    plt.grid(which='minor', alpha=0.4)
+    plt.grid(which='major', alpha=0.75)
+    plt.plot(truescatter, color="#d7191c")
 
     def generate_microphone_pressure(parameters,uSamples=userSamples):
         def newFunction(x):
@@ -217,31 +225,37 @@ def modelRun():
         return scatter/factor   
     
     for i in range(len(b)):
-        plt.plot(generate_microphone_pressure(posterior_samples_grouped[b[i]]), 'k', alpha=0.04)
+        plt.plot(generate_microphone_pressure(posterior_samples_grouped[b[i]]), 'k', color="black", alpha=0.04)
     
     plt.xlabel("Microphone index")
-    plt.ylabel("Response")
+    plt.ylabel("Normalized Response")
     plt.savefig("results/" + kernel + " traces.png")
 
     import corner
-    corner.corner(np.array(posterior_samples_grouped)*np.array([100.0,100.0,2.0*np.pi]),bins=200,
+    fig = corner.corner(np.array(posterior_samples_grouped)*np.array([100.0,100.0,2.0*np.pi]),bins=200,
               quantiles=[0.16, 0.5, 0.84],labels=[r"A (cm)", r"$\lambda$ (cm)", r"$\phi$ (rad)"],
-              show_titles=True, title_fmt = ".4f")
+              show_titles=True, title_fmt = ".4f", figsize=(16, 8))
+    
+    for ax in fig.axes:
+        ax.grid(which='both')  # Enable both major and minor grid lines
+        ax.grid(which='minor', alpha=0.4)
+        ax.grid(which='major', alpha=0.75)
+
     plt.savefig("results/" + kernel + " corner.png")
     plt.show()
 
-    plt.figure(figsize=(16,9))
-    font = {'family' : 'normal',
-            'weight' : 'normal',
-            'size'   : 14}
+    plt.figure(figsize=(16,6))
+    plt.grid(which='both')
+    plt.grid(which='minor', alpha=0.4)
+    plt.grid(which='major', alpha=0.75)
 
     x = np.linspace(0,0.6,500)
 
     plt.grid()
-    plt.plot(x,np.sqrt((mean-true)**2)/np.std(true),color='k',linestyle='dotted',label="Relative error of the mean of the surfaces")
-    plt.plot(x,np.sqrt((mean_surf-true)**2)/np.std(true),color='k',label="Relative error of the mean of the parameters")
-    plt.xlabel("x")
-    plt.ylabel("RSE factored by the standard deviation of the true surface")
+    plt.plot(x,np.sqrt((mean-true)**2)/np.std(true),color='#2c7bb6',linestyle='dashed',label="Relative error of the mean of the surfaces")
+    plt.plot(x,np.sqrt((mean_surf-true)**2)/np.std(true),color='#2c7bb6',label="Relative error of the mean of the parameters")
+    plt.xlabel("x (m)")
+    plt.ylabel("Factored RSE")
     plt.legend()
     plt.show()
 

@@ -443,12 +443,15 @@ class AcousticParameterMCMC:
             txt.write(summary.to_string())
 
         az.plot_energy(self.trace)
+        plt.rcParams.update({'font.size': 18})
 
         # Rescale the trace values and deviations
         scaled_trace = self.trace.copy()
+        scaled_trace.posterior["amp"] = scaled_trace.posterior["amp"]*100.0
+        scaled_trace.posterior["wl"] = scaled_trace.posterior["wl"]*100.0
         scaled_trace = scaled_trace.rename_vars({
-            "amp": "A (m)",
-            "wl": "$\lambda$ (m)",
+            "amp": "A (cm)",
+            "wl": "$\lambda$ (cm)",
             "phase": "$\phi$ (rad)"
         })
 
@@ -458,14 +461,20 @@ class AcousticParameterMCMC:
         fig = plt.gcf()
         fig.tight_layout()
         fig.subplots_adjust(hspace=0.5, wspace=0.3)
+        for ax in fig.axes:
+            for line in ax.get_lines():
+                line.set_color("#2c7bb6")
         plt.savefig("results/" + self._kernel.lower() + "-phase-pymc-trace.png")
 
         # Amp
         #scaled_trace.posterior["amp"] = self.trace.posterior["amp"]
-        az.plot_trace(scaled_trace, var_names=["A (m)"], divergences=False, compact=False, combined=False)
+        az.plot_trace(scaled_trace, var_names=["A (cm)"], divergences=False, compact=False, combined=False)
         fig = plt.gcf()
         fig.tight_layout()
         fig.subplots_adjust(hspace=0.5, wspace=0.3)
+        for ax in fig.axes:
+            for line in ax.get_lines():
+                line.set_color("#2c7bb6")
         plt.savefig("results/" + self._kernel.lower() + "-amp-pymc-trace.png")
 
         # Set include vars to ignore internal mu and sigma for phase - these values aren't of interest
@@ -473,8 +482,11 @@ class AcousticParameterMCMC:
         # WL
         if self._wavelengths is None:
             #scaled_trace.posterior["wl"] = self.trace.posterior["wl"]
-            az.plot_trace(scaled_trace, var_names=["$\lambda$ (m)"], divergences=False, compact=False, combined=False)
+            az.plot_trace(scaled_trace, var_names=["$\lambda$ (cm)"], divergences=False, compact=False, combined=False)
             fig = plt.gcf()
             fig.tight_layout()
             fig.subplots_adjust(hspace=0.5, wspace=0.3)
+            for ax in fig.axes:
+                for line in ax.get_lines():
+                    line.set_color("#2c7bb6")
             plt.savefig("results/" + self._kernel.lower() + "-wl-pymc-trace.png")

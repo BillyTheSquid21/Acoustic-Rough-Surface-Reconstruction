@@ -54,7 +54,7 @@ class BayesianNN:
 
                 # Likelihoods
                 sigma = pm.HalfNormal("sigma", sigma=0.1, shape=(self.n_outputs,))
-                pm.TruncatedNormal("param", lower=(0.0,0.0,-10.0), mu=output, sigma=sigma, observed=y_linear)
+                pm.TruncatedNormal("param", lower=(1.0 - penalty_mask)*-10.0, mu=output, sigma=sigma, observed=y_linear)
         
         def train(self, train_x, train_y, burnInCount=2000, sampleCount=5000, penalty_mask=None):
             self.current_x = train_x
@@ -92,13 +92,15 @@ class BayesianNN:
         def getTrace(self):
              return self.trace
         
-        def predict(self, test_x, test_y):
+        def predict(self, test_x, test_y, penalty_mask=None):
             # TODO: allow without a new Y, doesn't impact the results but is needed for dimensions
             self.current_x = test_x
             self.current_y = test_y
             self.n_inputs = test_x.shape[1]
             self.n_outputs = test_y.shape[1]
-            penalty_mask = pt.as_tensor_variable(1.0 + np.zeros(shape=(self.current_y.shape[1],)))
+            if penalty_mask == None:
+                penalty_mask = pt.as_tensor_variable(1.0 + np.zeros(shape=(self.current_y.shape[1],)))
+            print("Penalty mask: ", penalty_mask)
             self.build_model(penalty_mask=penalty_mask)
             with self.model:
                 self.trace = az.from_netcdf("results/" + self.name + ".nc")

@@ -23,7 +23,7 @@ def modelRun():
 
     cosine_count = 1
 
-    output_folder = "results/hmc-amp-wl-20K_20K-5pc-noise"
+    output_folder = "results/noisy-noisy"
 
     # Microphone array
     SourceLocation = [-0.20049999999999987,0.21884]
@@ -100,9 +100,9 @@ def modelRun():
         '''
         return (SymRMS(np.array(s)))*pc
 
-    amp_bounds = [0.001, 0.0045]
-    wl_bounds = [0.04, 0.15]
-    phase_bounds = [0.0, 0.0]
+    amp_bounds = [0.001, 0.00475]
+    wl_bounds = [0.05, 0.15]
+    phase_bounds = [-0.5, 0.5]
     frequency=sourceFreq
     generate_data = False
     if generate_data:
@@ -111,7 +111,7 @@ def modelRun():
         ampspace = np.random.uniform(amp_bounds[0], amp_bounds[1], p_count)
         wlspace = np.random.uniform(wl_bounds[0], wl_bounds[1], p_count)
         phasespace = np.random.uniform(phase_bounds[0], phase_bounds[1], p_count)
-        pc_noise = 0.05 # 20% noise level
+        pc_noise = 0.2 # 20% noise level
 
         for i in range(p_count):
             params.append((ampspace[i], wlspace[i], phasespace[i]))
@@ -132,7 +132,7 @@ def modelRun():
                     params[p] = (np.random.uniform(amp_bounds[0], amp_bounds[1]), np.random.uniform(wl_bounds[0], wl_bounds[1]), np.random.uniform(phase_bounds[0], phase_bounds[1]))
                     KA_Object = Directed2DVectorised(SourceLocation,RecLoc,newFunction,frequency,an,SourceAngle,'simp',userMinMax=[-1,1],userSamples=700,absolute=False)
 
-            s = KA_Object.Scatter(absolute=True,norm=False) / factor
+            s = KA_Object.Scatter(absolute=True,norm=False)
             s += np.random.normal(loc=0.0, scale=noise_sigma(s, pc_noise), size=(34,))
             s = np.abs(s)
             scatters.append(s)
@@ -155,6 +155,7 @@ def modelRun():
         plt.legend()
         plt.show()
 
+        np.savetxt(output_folder + "/data/amp_wl_phase_params_14KHz.csv", params, delimiter=",")
         np.savetxt(output_folder + "/data/amp_wl_phase_scatter_14KHz.csv", scatters, delimiter=",")
 
     params = np.loadtxt(output_folder + "/data/amp_wl_phase_params_14KHz.csv", delimiter=",")
@@ -177,7 +178,7 @@ def modelRun():
         for i in pbar:
             p = params[i]
             s = scatters[i]
-            current_p = "AMP-" + str(p[0]) + "-WL-" + str(p[1])
+            current_p = "AMP_" + str(p[0]) + "_WL_" + str(p[1]) + "_PHASE_" + str(p[2])
             pbar.set_postfix({'Current Params': current_p})
             filename = output_folder + "/" + current_p
 
@@ -209,30 +210,35 @@ def modelRun():
         return [os.path.join(directory, f) for f in os.listdir(directory) if f.endswith('.csv')]
     
     def tokenize_filename(filename):
-        return filename.rsplit('/', 1)[-1].split('-')
+        return filename.rsplit('/', 1)[-1].split('_')
 
     csv_files = list_csv_files(output_folder)
     true_amps = []
     true_wls = []
+    true_phases = []
     posterior_samples_grouped = []
     for file in csv_files:
         posterior_samples_grouped.append(np.array(AcousticParameterMCMC.LoadCSVData(file)))
         
         tokens = tokenize_filename(file)
         true_amps.append(float(tokens[1]))
-        true_wls.append(float("0." + tokens[3].split('.')[1]))
+        true_wls.append(float(tokens[3]))
+        true_phases.append(float(tokens[5].split('.')[0] + "." + tokens[5].split('.')[1]))
 
     posterior_samples_grouped = np.array(posterior_samples_grouped).squeeze()
 
     amps = np.array(posterior_samples_grouped[:,:,0])
     wls = np.array(posterior_samples_grouped[:,:,1])
+    phases = np.array(posterior_samples_grouped[:,:,2])*2.0*np.pi
 
     # Convert to NumPy arrays
     true_amp = np.array(true_amps)
     true_wl = np.array(true_wls)
+    true_phase = np.array(true_phases)*2.0*np.pi
 
     amps_hdi = az.hdi(amps.T, hdi_prob=0.68).T
     wls_hdi = az.hdi(wls.T, hdi_prob=0.68).T
+    phases_hdi = az.hdi(phases.T, hdi_prob=0.68, circular=True).T
 
     # Amps first
     amp_lower_hdi, amp_upper_hdi = amps_hdi
@@ -242,28 +248,32 @@ def modelRun():
     upper_err = np.maximum(amp_upper_hdi - pred_amp_sorted,0)
 
     # Step 5: Plot with correctly sorted data
-    plt.figure(figsize=(16, 9))
+    plt.rcParams.update({'font.size': 18})
+    plt.figure(figsize=(16, 6))
+    plt.grid(which='both')
+    plt.grid(which='minor', alpha=0.4)
+    plt.grid(which='major', alpha=0.75)
 
     # Scatter plot of predicted vs true values
     plt.errorbar(
-        true_amp, pred_amp_sorted, 
-        yerr=[lower_err, upper_err], 
+        true_amp*100.0, pred_amp_sorted*100.0, 
+        yerr=[lower_err*100.0, upper_err*100.0], 
         fmt='o', label="Predicted with 68\% HDI", 
-        capsize=4, capthick=1, alpha=0.7, markersize=5
+        capsize=4, capthick=1, alpha=0.7, markersize=5, color="#2c7bb6"
     )
 
     # Scatter plot of true test values
     #plt.scatter(true_amp_sorted, pred_amp_sorted, label="amps")
-    plt.scatter(true_amp, true_amp, color='orange', label="True test set")
+    plt.scatter(true_amp*100.0, true_amp*100.0, color='#d7191c', label="True test set")
 
     # Fill HDI region correctly
     #plt.fill_between(true_amp, amp_lower_hdi_smooth, amp_upper_hdi_smooth, 
     #                color='gray', alpha=0.3, label="68%% HDI")
 
     plt.legend()
-    plt.xlabel("True Amplitude")
-    plt.ylabel("Predicted Amplitude")
-    plt.title("Predicted Amplitude vs True Amplitude with 68\% HDI")
+    plt.xlabel("True Amplitude (cm)")
+    plt.ylabel("Predicted Amplitude (cm)")
+    #plt.title("Predicted Amplitude vs True Amplitude with 68\% HDI")
     plt.show()
 
     from sklearn.metrics import r2_score
@@ -277,32 +287,97 @@ def modelRun():
     upper_err = np.maximum(wl_upper_hdi - pred_wl_sorted,0)
 
     # Step 5: Plot with correctly sorted data
-    plt.figure(figsize=(16, 9))
+    plt.figure(figsize=(16, 6))
+    plt.grid(which='both')
+    plt.grid(which='minor', alpha=0.4)
+    plt.grid(which='major', alpha=0.75)
 
     # Scatter plot of predicted vs true values
     plt.errorbar(
-        true_wl, pred_wl_sorted, 
-        yerr=[lower_err, upper_err], 
+        true_wl*100.0, pred_wl_sorted*100.0, 
+        yerr=[lower_err*100.0, upper_err*100.0], 
         fmt='o', label="Predicted with 68\% HDI", 
-        capsize=4, capthick=1, alpha=0.7, markersize=5
+        capsize=4, capthick=1, alpha=0.7, markersize=5, color="#2c7bb6"
     )
 
     # Scatter plot of true test values
     #plt.scatter(true_amp, pred_wl_sorted, label="wls")
-    plt.scatter(true_wl, true_wl, color='orange', label="True test set")
+    plt.scatter(true_wl*100.0, true_wl*100.0, color='#d7191c', label="True test set")
 
     # Fill HDI region correctly
     #plt.fill_between(true_amp, amp_lower_hdi_smooth, amp_upper_hdi_smooth, 
     #                color='gray', alpha=0.3, label="68%% HDI")
 
     plt.legend()
-    plt.xlabel("True Wavelength")
-    plt.ylabel("Predicted Wavelength")
-    plt.title("Predicted Wavelength vs True Wavelength with 68\% HDI")
+    plt.xlabel("True Wavelength (cm)")
+    plt.ylabel("Predicted Wavelength (cm)")
+    #plt.title("Predicted Wavelength vs True Amplitude with 68\% HDI")
     plt.show()
 
     print("R2 score of amp in BNN: ", r2_score(true_wl, pred_wl_sorted))
 
+    #Phases next
+    from src.SymbolicMath import SymAngularMean
+    phase_lower_hdi, phase_upper_hdi = phases_hdi
+    pred_phase_sorted = np.apply_along_axis(SymAngularMean, arr=phases.copy()/(2.0*np.pi), axis=1)*2.0*np.pi
+
+    lower_err = np.arccos(np.cos(pred_phase_sorted - phase_lower_hdi))
+    upper_err = np.arccos(np.cos(phase_upper_hdi - pred_phase_sorted))
+
+    plt.rcParams.update({'font.size': 14})
+    fig = plt.figure(figsize=(7, 7))
+    ax = fig.add_subplot(111, projection='polar')
+    plt.thetagrids()
+
+    # Plot predicted vs. true phase with error bars
+    ax.errorbar(
+        true_phase, pred_phase_sorted,
+        yerr=[lower_err, upper_err],
+        fmt='o', label="Predicted with 68\% HDI",
+        capsize=4, capthick=1, alpha=0.7, markersize=5, color="#2c7bb6"
+    )
+
+    # Reference line for true values
+    ax.plot(true_phase, true_phase, 'o', color='#d7191c', label="True test set")
+
+    # ---- Set angular (theta) ticks from -2π to +2π ----
+    theta_ticks = np.linspace(-2*np.pi, 2*np.pi, 9)  # [-2π, ..., 2π]
+    theta_labels = [
+        r'$-2\pi$', r'$-\frac{3\pi}{2}$', r'$-\pi$', r'$-\frac{\pi}{2}$',
+        r'$0$', r'$\frac{\pi}{2}$', r'$\pi$', r'$\frac{3\pi}{2}$', r'$2\pi$'
+    ]
+    # Wrap values into [0, 2π) range for polar coordinates
+    wrapped_ticks = np.mod(theta_ticks, 2*np.pi)
+    ax.set_xticks(wrapped_ticks)
+    ax.set_xticklabels(theta_labels)
+
+    # ---- Set radial (r) limits and ticks from -2π to 2π ----
+    ax.set_rlim(-2*np.pi, 2*np.pi)
+    r_ticks = np.linspace(-2*np.pi, 2*np.pi, 9)
+    r_labels = [
+        r'$-2\pi$', r'$-\frac{3\pi}{2}$', r'$-\pi$', r'$-\frac{\pi}{2}$',
+        r'$0$', r'$\frac{\pi}{2}$', r'$\pi$', r'$\frac{3\pi}{2}$', r'$2\pi$'
+    ]
+    ax.set_yticks(r_ticks)
+    ax.set_yticklabels(r_labels)
+    ax.set_thetagrids([0, 45, 90, 135, 180, 225, 270, 315],
+                  labels=['0', r'$\frac{\pi}{4}$', r'$\frac{\pi}{2}$', r'$\frac{3\pi}{4}$', r'$\pi$', 
+                          r'$\frac{5\pi}{4}$', r'$\frac{3\pi}{2}$', r'$\frac{7\pi}{4}$'])
+
+    # Add a custom label manually near the radial ticks
+    ax.text(
+        np.deg2rad(0),  # angle = 90 degrees in radians (i.e., left side of plot)
+        ax.get_rmin() + 6.75,  # place it just outside the largest tick
+        "Predicted Offset",  # your label text
+        ha='left', va='center',
+        rotation=0  # optional: vertical text
+    )
+
+    # Title and labels
+    plt.xlabel("True Offset")
+    ax.legend(loc="lower left", bbox_to_anchor=(-0.1,-0.1))
+    plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":

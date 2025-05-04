@@ -16,6 +16,108 @@ if __name__ == "__main__":
     plt.rcParams["font.family"] = "Bitstream Charter"
 
     np.random.seed(42)
+    # Load the trace data
+    #trace = az.from_netcdf("results/amp_wl_bnn.nc")
+
+    # Initialize a color palette for the forest plot
+    #sns.set(style="whitegrid")
+
+    # You can control the number of top weights to display here
+    #top_n = 30  # Change this value to control how many top weights you want to plot
+    #palette = sns.color_palette("Blues_d", top_n)  # Choose a color palette for the top 20 parameters
+
+    # Rename dictionary if needed
+    #rename_dict = {"W5": "W4", "b5": "b4"}
+
+    # Iterate over each variable in the posterior
+    #for var in trace.posterior.data_vars:
+    #    print(f"Plotting {var} with padding...")
+
+        # Get the posterior values for this variable
+    #    values = trace.posterior[var].values
+
+        # If the variable is 1D (like biases), handle it differently
+    #    if values.ndim == 3:  # For 1D variables (e.g., biases: chain, draw, bias_dim_0)
+    #        mean_abs = np.mean(np.abs(values), axis=(0, 1))  # Mean of absolute values across chains and draws
+    #        top_indices = np.argsort(mean_abs)[-top_n:]  # Get indices of top N
+            
+    #        var_names = [f"{var}[{i}]" for i in top_indices]  # 1D variable names (e.g., 'b1[0]', 'b1[1]')
+    #        top_coords = [(i,) for i in top_indices]  # For 1D variables, just use the index in the 1D array
+
+    #        print(f"Top {top_n} {var} indices: {top_indices}")
+            
+    #    elif values.ndim == 4:  # For 2D weight matrices (e.g., chain, draw, row, col)
+    #        mean_abs = np.mean(np.abs(values), axis=(0, 1))
+    #        flat_means = mean_abs.reshape(-1)
+    #        top_indices = np.argsort(flat_means)[-top_n:]  # Get indices of top N
+            
+    #        rows, cols = mean_abs.shape
+    #        top_coords = [(i // cols, i % cols) for i in top_indices]  # Get 2D coordinates
+    #        var_names = [f"{var}[{i // cols}, {i % cols}]" for i in top_indices]  # 2D variable names
+
+    #        print(f"Top {top_n} {var} coordinates: {top_coords}")
+            
+        # Extract mean and credible intervals for each of the top N variables
+    #    means = []
+    #    lower_68 = []
+    #    upper_68 = []
+    #    lower_95 = []
+    #    upper_95 = []
+        
+    #    for coord in top_coords:
+    #        if len(coord) == 1:  # For 1D variables (biases)
+    #            row = coord[0]
+    #            param_values = values[:, :, row]  # Get values for this bias
+    #        else:  # For 2D variables (weights)
+    #            row, col = coord
+    #            param_values = values[:, :, row, col]  # Get values for this weight
+
+            # Calculate the mean and the credible intervals (68% and 95%)
+    #        mean = np.mean(param_values)
+    #        ci_lower_68 = np.percentile(param_values, 16)
+    #        ci_upper_68 = np.percentile(param_values, 84)
+    #        ci_lower_95 = np.percentile(param_values, 2.5)
+    #        ci_upper_95 = np.percentile(param_values, 97.5)
+            
+    #        means.append(mean)
+    #        lower_68.append(ci_lower_68)
+    #        upper_68.append(ci_upper_68)
+    #        lower_95.append(ci_lower_95)
+    #        upper_95.append(ci_upper_95)
+
+        # Adjust figsize for the top N parameters
+    #    height = max(4, top_n * 0.2)  # Adjust height based on top N
+    #    var_to_plot = rename_dict.get(var, var)
+
+        # Create the forest plot manually using Seaborn palette
+    #    plt.figure(figsize=(8, height))
+        
+        # Set the palette (it will be reused for each variable)
+    #    palette = sns.color_palette("dark:#5A9_r", n_colors=top_n)  # Choose a palette like "coolwarm"
+        
+    #    for i, var_name in enumerate(var_names):
+            # Plot the 95% credible interval with a lighter color
+    #        plt.plot([lower_95[i], upper_95[i]], [i, i], color=palette[i], lw=2, label=f"95% CI" if i == 0 else "")  # 95% CI
+            # Plot the 68% credible interval with a wider line (overlaid on the 95% CI)
+    #        plt.plot([lower_68[i], upper_68[i]], [i, i], color=palette[i], lw=4, label=f"68% CI" if i == 0 else "")  # 68% CI
+            # Plot the mean points with colors from the palette
+    #        plt.scatter(means[i], i, color=palette[i], s=50, zorder=5)  # Mean points
+
+        # Set the plot's labels
+    #    plt.yticks(np.arange(len(var_names)), var_names, fontsize=10)
+    #    plt.xlabel('Parameter Value')
+    #    plt.title(f"Forest plot for top {top_n} {var_to_plot} weights with 68% and 95% CIs", fontsize=14)
+
+        # Add legend
+    #    plt.legend()
+
+        # Tight layout to avoid overlap
+    #    plt.tight_layout()
+
+        # Save the plot
+    #    plt.savefig(f"results/p2forest_top{top_n}_{var_to_plot}.png", bbox_inches='tight')
+    #    plt.close()
+
 
     # Create the neural network model
     cosine_count = 1
@@ -108,7 +210,7 @@ if __name__ == "__main__":
 
     amp_bounds = [0.0, 0.01]
     wl_bounds = [0.04, 0.2]
-    pc_noise = 0.05
+    pc_noise = 0.2
     if generate_data:
         params = []
         scatters = []
@@ -178,6 +280,7 @@ if __name__ == "__main__":
     print("Testing scatter view:", X3_test.shape, "\n", X3_test, "\n")
 
     # Linear regression first
+    plt.rcParams.update({'font.size': 18})
     from sklearn.linear_model import LinearRegression
     lr = LinearRegression()
     lr.fit(X3_train, Y3_train)
@@ -239,7 +342,7 @@ if __name__ == "__main__":
     upper_err = np.abs(amp_upper_hdi_sorted - pred_amp_sorted)
 
     # Step 5: Plot with correctly sorted data
-    plt.figure(figsize=(16, 9))
+    plt.figure(figsize=(16, 6))
 
     # Randomly select 1000 subset
     amp_inds_sub = np.random.choice(sort_idx_amp, size=250)
@@ -250,24 +353,26 @@ if __name__ == "__main__":
 
     # Scatter plot of predicted vs true values
     plt.errorbar(
-        tas_sub, pas_sub, 
-        yerr=[le_sub, ue_sub], 
+        tas_sub*100.0, pas_sub*100.0, 
+        yerr=[le_sub*100.0, ue_sub*100.0], 
         fmt='o', label="Predicted with 68\% HDI", 
-        capsize=4, capthick=1, alpha=0.6, markersize=5
+        capsize=4, capthick=1, alpha=0.6, markersize=5, color="#2c7bb6"
     )
 
     # Scatter plot of true test values
     #plt.scatter(true_amp_sorted, pred_amp_sorted, label="amps")
-    plt.plot(true_amp_sorted, true_amp_sorted, color='orange', label="True test set")
+    plt.plot(true_amp_sorted*100.0, true_amp_sorted*100.0, color='#d7191c', label="True test set")
 
     # Fill HDI region correctly
-    plt.fill_between(true_amp_sorted, amp_lower_hdi_smooth, amp_upper_hdi_smooth, 
-                    color='gray', alpha=0.5, label="68\% HDI")
+    plt.fill_between(true_amp_sorted*100.0, amp_lower_hdi_smooth*100.0, amp_upper_hdi_smooth*100.0, 
+                    color='#ffffbf', label="68\% HDI")
+    plt.plot(true_amp_sorted*100.0, amp_lower_hdi_smooth*100.0, color='black', linewidth=0.75)  # Lower boundary
+    plt.plot(true_amp_sorted*100.0, amp_upper_hdi_smooth*100.0, color='black', linewidth=0.75)  # Upper boundary
 
     plt.legend()
-    plt.xlabel("True Amplitude")
-    plt.ylabel("Predicted Amplitude")
-    plt.title("Predicted vs True Amplitudes with 68\% HDI")
+    plt.xlabel("True Amplitude (cm)")
+    plt.ylabel("Predicted Amplitude (cm)")
+    #plt.title("Predicted vs True Amplitudes with 68\% HDI")
     plt.savefig("results/bnn-amp-wl-pred-amp-" + str(pc_noise) + ".png")
     plt.show()
 
@@ -284,7 +389,7 @@ if __name__ == "__main__":
     upper_err = wl_upper_hdi_sorted - pred_wl_sorted
 
     # Step 5: Plot with correctly sorted data
-    plt.figure(figsize=(16, 9))
+    plt.figure(figsize=(16, 6))
 
     # Take subset
     wl_inds_sub = np.random.choice(sort_idx_wl, size=250)
@@ -295,24 +400,27 @@ if __name__ == "__main__":
 
     # Scatter plot of predicted vs true values
     plt.errorbar(
-        tws_sub, pws_sub, 
-        yerr=[le_sub, ue_sub], 
+        tws_sub*100.0, pws_sub*100.0, 
+        yerr=[le_sub*100.0, ue_sub*100.0], 
         fmt='o', label="Predicted with 68\% HDI", 
-        capsize=4, capthick=1, alpha=0.6, markersize=5
+        capsize=4, capthick=1, alpha=0.6, markersize=5, color="#2c7bb6"
     )
 
     # Scatter plot of true test values
     #plt.scatter(true_amp_sorted, pred_amp_sorted, label="amps")
-    plt.plot(true_wl_sorted, true_wl_sorted, color='orange', label="True test set")
+    plt.plot(true_wl_sorted*100.0, true_wl_sorted*100.0, color='#d7191c', label="True test set")
 
     # Fill HDI region correctly
-    plt.fill_between(true_wl_sorted, wl_lower_hdi_smooth, wl_upper_hdi_smooth, 
-                    color='gray', alpha=0.5, label="68\% HDI")
+    plt.fill_between(true_wl_sorted*100.0, wl_lower_hdi_smooth*100.0, wl_upper_hdi_smooth*100.0, 
+                    color='#ffffbf', label="68\% HDI")
+    
+    plt.plot(true_wl_sorted*100.0, wl_lower_hdi_smooth*100.0, color='black', linewidth=0.75)  # Lower boundary
+    plt.plot(true_wl_sorted*100.0, wl_upper_hdi_smooth*100.0, color='black', linewidth=0.75)  # Upper boundary
 
     plt.legend()
-    plt.xlabel("True Wavelength")
-    plt.ylabel("Predicted Wavelength")
-    plt.title("Predicted vs True Wavelengths with 68\% HDI")
+    plt.xlabel("True Wavelength (cm)")
+    plt.ylabel("Predicted Wavelength (cm)")
+    #plt.title("Predicted vs True Wavelengths with 68\% HDI")
     plt.savefig("results/bnn-amp-wl-pred-wl-" + str(pc_noise) + ".png")
     plt.show()
 
@@ -330,7 +438,7 @@ if __name__ == "__main__":
         0.05334908, 0.03035023, 0.0342647,  0.0377431,  0.03844866, 0.03600139,
         0.02590109, 0.01360588, 0.00829887, 0.00865361]
     
-    trueScatter = comp/(1.0*factor)
+    trueScatter = comp/(factor*0.9)
     plt.plot(trueScatter[:18])
     p = (0.0015, 0.05, 0.0)
     trueScatter = generate_microphone_pressure(p)[:18]
@@ -360,6 +468,10 @@ if __name__ == "__main__":
     mean = SymCosineSumSurface(x,hmm2)
     true = SymCosineSurface(x,p).copy()
 
+    plt.plot(trueScatter[:18])
+    plt.plot(generate_microphone_pressure(mean)[:18])
+    plt.show()
+
     # Creating mean of all surfaces
     print("Creating individual surfaces")
     surfs = []
@@ -378,25 +490,30 @@ if __name__ == "__main__":
         mins.append(vals[0])
         maxx.append(vals[1])
 
-    plt.figure(figsize = (16,9))
-    plt.grid()
-    plt.fill_between(x,mins,maxx,color='grey',alpha=0.50,label='Credible interval (68\%)')
-    plt.plot(x,mean_surf, label='Surface formed from the mean of the model surfaces')
-    plt.plot(x,mean,label='Surface formed from the mean of the model parameters')
-    plt.plot(x,true,label='True surface')
+    plt.figure(figsize = (16,6))
+    plt.grid(which='both')
+    plt.grid(which='minor', alpha=0.4)
+    plt.grid(which='major', alpha=0.75)
+    plt.fill_between(x,mins,maxx,color='#ffffbf',label='Credible interval (68\%)')
+    plt.plot(x, mins, color='black', linewidth=0.75)  # Lower boundary
+    plt.plot(x, maxx, color='black', linewidth=0.75)  # Upper boundary
+    plt.plot(x,mean_surf, color="#2c7bb6", linestyle="dashed", label='Surface formed from the mean of the model surfaces')
+    plt.plot(x,mean, color="#2c7bb6",label='Surface formed from the mean of the model parameters')
+    plt.plot(x,true, color="#d7191c",label='True surface')
 
     choice_count = 300
     b = np.random.choice(range(posterior_samples_grouped.shape[0]),choice_count)
 
     plt.xlabel("x (m)")
     plt.ylabel("Surface elevation (m)")
-    plt.legend()
     plt.savefig("results/" + "bnn" + " reconstruction.png")
 
     print("Creating response plot")
-    plt.figure(figsize=(16,9))
-    plt.grid()
-    plt.plot(trueScatter)
+    plt.figure(figsize=(16,6))
+    plt.grid(which='both')
+    plt.grid(which='minor', alpha=0.4)
+    plt.grid(which='major', alpha=0.75)
+    plt.plot(trueScatter, color="#d7191c")
 
     def generate_microphone_pressure(parameters,uSamples=700):
         def newFunction(x):
@@ -410,28 +527,32 @@ if __name__ == "__main__":
         plt.plot(generate_microphone_pressure(posterior_samples_grouped[b[i]]), 'k', alpha=0.04)
     
     plt.xlabel("Microphone index")
-    plt.ylabel("Response")
+    plt.ylabel("Normalized Response")
     plt.savefig("results/" + "bnn" + " traces.png")
 
-    plt.figure(figsize=(16,9))
-    font = {'family' : 'normal',
-            'weight' : 'normal',
-            'size'   : 14}
+    plt.figure(figsize=(16,6))
+    plt.grid(which='both')
+    plt.grid(which='minor', alpha=0.4)
+    plt.grid(which='major', alpha=0.75)
 
     x = np.linspace(0,0.6,500)
 
     plt.grid()
-    plt.plot(x,np.sqrt((mean-true)**2)/np.std(true),color='k',linestyle='dotted',label="Relative error of the mean of the surfaces")
-    plt.plot(x,np.sqrt((mean_surf-true)**2)/np.std(true),color='k',label="Relative error of the mean of the parameters")
-    plt.xlabel("x")
-    plt.ylabel("RSE factored by the standard deviation of the true surface")
+    plt.plot(x,np.sqrt((mean-true)**2)/np.std(true),color='#2c7bb6',linestyle='dashed',label="Relative error of the mean of the surfaces")
+    plt.plot(x,np.sqrt((mean_surf-true)**2)/np.std(true),color='#2c7bb6',label="Relative error of the mean of the parameters")
+    plt.xlabel("x (m)")
+    plt.ylabel("Factored RSE")
     plt.legend()
     plt.show()
 
-    plt.hist(amps, bins=50, alpha=0.5, label="amp")
-    plt.legend()
+    plt.figure(figsize=(8,6))
+    plt.grid()
+    plt.hist(amps*100.0, bins=50, alpha=0.5, label="$A$", color='#2c7bb6')
+    plt.xlabel("Predicted Amplitude (cm)")
     plt.show()
 
-    plt.hist(wls, bins=50, alpha=0.5, label="wl")
-    plt.legend()
+    plt.figure(figsize=(8,6))
+    plt.grid()
+    plt.hist(wls*100.0, bins=50, alpha=0.5, label="$\lambda$", color='#2c7bb6')
+    plt.xlabel("Predicted Wavelength (cm)")
     plt.show()
