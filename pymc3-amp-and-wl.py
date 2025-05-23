@@ -17,106 +17,112 @@ if __name__ == "__main__":
 
     np.random.seed(42)
     # Load the trace data
-    #trace = az.from_netcdf("results/amp_wl_bnn.nc")
+    trace = az.from_netcdf("results/amp_wl_bnn.nc")
 
     # Initialize a color palette for the forest plot
-    #sns.set(style="whitegrid")
+    sns.set(style="whitegrid")
 
     # You can control the number of top weights to display here
-    #top_n = 30  # Change this value to control how many top weights you want to plot
-    #palette = sns.color_palette("Blues_d", top_n)  # Choose a color palette for the top 20 parameters
+    top_n = 30  # Change this value to control how many top weights you want to plot
+    palette = sns.color_palette("Blues_d", top_n)  # Choose a color palette for the top 20 parameters
 
     # Rename dictionary if needed
-    #rename_dict = {"W5": "W4", "b5": "b4"}
+    rename_dict = {"W5": "W4", "b5": "b4"}
 
     # Iterate over each variable in the posterior
-    #for var in trace.posterior.data_vars:
-    #    print(f"Plotting {var} with padding...")
+    for var in trace.posterior.data_vars:
+        print(f"Plotting {var} with padding...")
 
         # Get the posterior values for this variable
-    #    values = trace.posterior[var].values
+        values = trace.posterior[var].values
 
         # If the variable is 1D (like biases), handle it differently
-    #    if values.ndim == 3:  # For 1D variables (e.g., biases: chain, draw, bias_dim_0)
-    #        mean_abs = np.mean(np.abs(values), axis=(0, 1))  # Mean of absolute values across chains and draws
-    #        top_indices = np.argsort(mean_abs)[-top_n:]  # Get indices of top N
+        if values.ndim == 3:  # For 1D variables (e.g., biases: chain, draw, bias_dim_0)
+            mean_abs = np.mean(np.abs(values), axis=(0, 1))  # Mean of absolute values across chains and draws
+            top_indices = np.argsort(mean_abs)[-top_n:]  # Get indices of top N
             
-    #        var_names = [f"{var}[{i}]" for i in top_indices]  # 1D variable names (e.g., 'b1[0]', 'b1[1]')
-    #        top_coords = [(i,) for i in top_indices]  # For 1D variables, just use the index in the 1D array
+            var_names = [f"{var}[{i}]" for i in top_indices]  # 1D variable names (e.g., 'b1[0]', 'b1[1]')
+            top_coords = [(i,) for i in top_indices]  # For 1D variables, just use the index in the 1D array
 
-    #        print(f"Top {top_n} {var} indices: {top_indices}")
+            print(f"Top {top_n} {var} indices: {top_indices}")
             
-    #    elif values.ndim == 4:  # For 2D weight matrices (e.g., chain, draw, row, col)
-    #        mean_abs = np.mean(np.abs(values), axis=(0, 1))
-    #        flat_means = mean_abs.reshape(-1)
-    #        top_indices = np.argsort(flat_means)[-top_n:]  # Get indices of top N
+        elif values.ndim == 4:  # For 2D weight matrices (e.g., chain, draw, row, col)
+            mean_abs = np.mean(np.abs(values), axis=(0, 1))
+            flat_means = mean_abs.reshape(-1)
+            top_indices = np.argsort(flat_means)[-top_n:]  # Get indices of top N
             
-    #        rows, cols = mean_abs.shape
-    #        top_coords = [(i // cols, i % cols) for i in top_indices]  # Get 2D coordinates
-    #        var_names = [f"{var}[{i // cols}, {i % cols}]" for i in top_indices]  # 2D variable names
+            rows, cols = mean_abs.shape
+            top_coords = [(i // cols, i % cols) for i in top_indices]  # Get 2D coordinates
+            var_names = [f"{var}[{i // cols}, {i % cols}]" for i in top_indices]  # 2D variable names
 
-    #        print(f"Top {top_n} {var} coordinates: {top_coords}")
+            print(f"Top {top_n} {var} coordinates: {top_coords}")
             
         # Extract mean and credible intervals for each of the top N variables
-    #    means = []
-    #    lower_68 = []
-    #    upper_68 = []
-    #    lower_95 = []
-    #    upper_95 = []
+        means = []
+        lower_68 = []
+        upper_68 = []
+        lower_95 = []
+        upper_95 = []
         
-    #    for coord in top_coords:
-    #        if len(coord) == 1:  # For 1D variables (biases)
-    #            row = coord[0]
-    #            param_values = values[:, :, row]  # Get values for this bias
-    #        else:  # For 2D variables (weights)
-    #            row, col = coord
-    #            param_values = values[:, :, row, col]  # Get values for this weight
+        for coord in top_coords:
+            if len(coord) == 1:  # For 1D variables (biases)
+                row = coord[0]
+                param_values = values[:, :, row]  # Get values for this bias
+            else:  # For 2D variables (weights)
+                row, col = coord
+                param_values = values[:, :, row, col]  # Get values for this weight
 
             # Calculate the mean and the credible intervals (68% and 95%)
-    #        mean = np.mean(param_values)
-    #        ci_lower_68 = np.percentile(param_values, 16)
-    #        ci_upper_68 = np.percentile(param_values, 84)
-    #        ci_lower_95 = np.percentile(param_values, 2.5)
-    #        ci_upper_95 = np.percentile(param_values, 97.5)
+            mean = np.mean(param_values)
+            ci_lower_68 = np.percentile(param_values, 16)
+            ci_upper_68 = np.percentile(param_values, 84)
+            ci_lower_95 = np.percentile(param_values, 2.5)
+            ci_upper_95 = np.percentile(param_values, 97.5)
             
-    #        means.append(mean)
-    #        lower_68.append(ci_lower_68)
-    #        upper_68.append(ci_upper_68)
-    #        lower_95.append(ci_lower_95)
-    #        upper_95.append(ci_upper_95)
+            means.append(mean)
+            lower_68.append(ci_lower_68)
+            upper_68.append(ci_upper_68)
+            lower_95.append(ci_lower_95)
+            upper_95.append(ci_upper_95)
 
         # Adjust figsize for the top N parameters
-    #    height = max(4, top_n * 0.2)  # Adjust height based on top N
-    #    var_to_plot = rename_dict.get(var, var)
+        height = max(4, top_n * 0.2)  # Adjust height based on top N
+        var_to_plot = rename_dict.get(var, var)
 
         # Create the forest plot manually using Seaborn palette
-    #    plt.figure(figsize=(8, height))
+        plt.figure(figsize=(8, height))
         
         # Set the palette (it will be reused for each variable)
-    #    palette = sns.color_palette("dark:#5A9_r", n_colors=top_n)  # Choose a palette like "coolwarm"
+        palette = sns.color_palette("dark:#5A9_r", n_colors=top_n)  # Choose a palette like "coolwarm"
         
-    #    for i, var_name in enumerate(var_names):
+        for i, var_name in enumerate(var_names):
             # Plot the 95% credible interval with a lighter color
-    #        plt.plot([lower_95[i], upper_95[i]], [i, i], color=palette[i], lw=2, label=f"95% CI" if i == 0 else "")  # 95% CI
+            plt.plot([lower_95[i], upper_95[i]], [i, i], color=palette[i], lw=2, label=f"95% CI" if i == 0 else "")  # 95% CI
             # Plot the 68% credible interval with a wider line (overlaid on the 95% CI)
-    #        plt.plot([lower_68[i], upper_68[i]], [i, i], color=palette[i], lw=4, label=f"68% CI" if i == 0 else "")  # 68% CI
+            plt.plot([lower_68[i], upper_68[i]], [i, i], color=palette[i], lw=4, label=f"68% CI" if i == 0 else "")  # 68% CI
             # Plot the mean points with colors from the palette
-    #        plt.scatter(means[i], i, color=palette[i], s=50, zorder=5)  # Mean points
+            plt.scatter(means[i], i, color=palette[i], s=50, zorder=5)  # Mean points
 
         # Set the plot's labels
-    #    plt.yticks(np.arange(len(var_names)), var_names, fontsize=10)
-    #    plt.xlabel('Parameter Value')
-    #    plt.title(f"Forest plot for top {top_n} {var_to_plot} weights with 68% and 95% CIs", fontsize=14)
+        for i in range(len(var_names)):
+            v = var_names[i]
+            v = v.replace("W5", "W4")
+            v = v.replace("b5", "b4")
+            var_names[i] = v
+
+        plt.yticks(np.arange(len(var_names)), var_names, fontsize=10)
+        plt.xlabel('Parameter Value')
+        plt.title(f"Forest plot for top {len(var_names)} {var_to_plot} weights with 68% and 95% CIs", fontsize=14)
 
         # Add legend
-    #    plt.legend()
+        plt.legend()
 
         # Tight layout to avoid overlap
-    #    plt.tight_layout()
+        plt.tight_layout()
 
         # Save the plot
-    #    plt.savefig(f"results/p2forest_top{top_n}_{var_to_plot}.png", bbox_inches='tight')
-    #    plt.close()
+        plt.savefig(f"results/p2forest_top{top_n}_{var_to_plot}.png", bbox_inches='tight')
+        plt.close()
 
 
     # Create the neural network model

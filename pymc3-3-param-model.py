@@ -204,8 +204,8 @@ def modelRun():
     choice_count = 300
     b = np.random.choice(range(sample_count),choice_count)
 
-    plt.xlabel("x (m)")
-    plt.ylabel("Surface elevation (m)")
+    #plt.xlabel("x (m)")
+    #plt.ylabel("Surface elevation (m)")
     #plt.legend()
     plt.savefig("results/" + kernel.lower() + " reconstruction.png")
 

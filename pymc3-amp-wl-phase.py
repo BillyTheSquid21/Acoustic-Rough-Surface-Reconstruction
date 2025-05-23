@@ -104,9 +104,15 @@ if __name__ == "__main__":
             plt.scatter(means[i], i, color=palette[i], s=50, zorder=5)  # Mean points
 
         # Set the plot's labels
+        for i in range(len(var_names)):
+            v = var_names[i]
+            v = v.replace("W5", "W4")
+            v = v.replace("b5", "b4")
+            var_names[i] = v
+
         plt.yticks(np.arange(len(var_names)), var_names, fontsize=10)
         plt.xlabel('Parameter Value')
-        plt.title(f"Forest plot for top {top_n} {var_to_plot} weights with 68% and 95% CIs", fontsize=14)
+        plt.title(f"Forest plot for top {len(var_names)} {var_to_plot} weights with 68% and 95% CIs", fontsize=14)
 
         # Add legend
         plt.legend()
