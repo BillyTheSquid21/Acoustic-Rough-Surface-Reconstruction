@@ -32,4 +32,4 @@ This project demonstrates the use of acoustic scattering to reconstruct rough su
 
 ## Acknowledgements
 
-I would like to extend my thanks to my project supervisor, Dr Anton Krynkin for providing invaluable feedback and resources throughout the year. I would also like to thank Michael David Johnson for providing the linearized Kirchhoff approximation code.
+I would like to extend my thanks to my project supervisor, Dr Anton Krynkin for providing invaluable feedback and resources throughout the project. I would also like to thank Michael David Johnson for providing the linearized Kirchhoff approximation code.
