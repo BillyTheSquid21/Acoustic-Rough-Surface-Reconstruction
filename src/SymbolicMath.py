@@ -4,10 +4,14 @@ import pytensor.graph.op
 import pytensor.tensor as pt
 import numpy as np
 import scipy as sp
-from scipy.optimize import bisect
-import math
 
-def SymAngularMean(phases):
+'''
+A collection of important maths functions for the project. 
+
+Some are vectorized to maintain symbolic graph in pymc.
+'''
+
+def AngularMean(phases):
     '''
     Calculates the angular mean of the phases which accounts for phase wrapping.
     Described in Johnson et al (2024).
@@ -23,12 +27,30 @@ def SymAngularMean(phases):
     cos_sum = np.sum(np.cos(adjusted_phases))
     return np.arctan2(sin_sum, cos_sum)/(2.0*np.pi)
 
-def SymRMS(x):
+def RMS(x):
+    '''
+    Calculates the Root Mean Squared (RMS) values of an input.
+
+    Parameters:
+        x (np.array): The values to calculate the RMS of
+    
+    Returns:
+        float: The RMS value
+    '''
     return np.sqrt(np.mean(x**2.0))
 
-def GetSpecularIndices(sourceLocation, sourceAngle, sourceFreq, receiverLoc):
+def GetSpecularIndices(sourceLocation, sourceAngle, sourceFreq, receiverLocations):
     '''
-    Get the indices of the receivers within the specular region
+    Get the indices of the receivers within the specular region, based on the half power beam width.
+
+    Parameters:
+        sourceLocation (tuple): The location in world space of the acoustic source.
+        sourceAngle (float): Angle the acoustic source is at
+        sourceFrequency (float): The frequency of the source acoustic wave
+        recieverLocations (Array or List): The locations in world space of the recievers. Must be an array of (x,y) coordinates.
+
+    Returns:
+        List: The indices of the receivers within the specular region.
     '''
 
     def get_spec_point(sourceloc, recloc):
@@ -49,16 +71,13 @@ def GetSpecularIndices(sourceLocation, sourceAngle, sourceFreq, receiverLoc):
     k = (2*np.pi*sourceFreq)/343
     a = 0.02
     hpbw = HalfPowerBeamWidth(k, a, specdist)
-    print("Half Power Beam Width: ", hpbw*(180.0/np.pi), " degrees")
 
     specspread_left = (specdist * (np.sin(hpbw/2))) / (np.sin(np.pi-sourceAngle-(hpbw/2)))
     specspread_right = (specdist * (np.sin(hpbw/2))) / (np.sin(sourceAngle-(hpbw/2)))
-    #print("Specular point distance: ", specdist)
-    #print("Specular spread: ", specspread)
 
     indices = []
-    for i in range(len(receiverLoc)):
-        rspec = get_spec_point(sourceLocation, receiverLoc[i])
+    for i in range(len(receiverLocations)):
+        rspec = get_spec_point(sourceLocation, receiverLocations[i])
         if rspec > specpoint - specspread_left and rspec < specpoint + specspread_right:
             indices.append(i)
     return indices
@@ -66,6 +85,15 @@ def GetSpecularIndices(sourceLocation, sourceAngle, sourceFreq, receiverLoc):
 def AcousticSourceDirectivity(theta, k, a, dist):
     '''
     Directivity function for the microphones
+
+    Parameters:
+        theta (float): The angle from 0 within the directivity region.
+        k (float): The source wavenumber.
+        a (float): The piston aperture.
+        dist (float): The distance from the source.
+
+    Returns:
+        float: The directivity magnitude.
     '''
     # https://homepages.uc.edu/~masttd/papers/2005_jasa_piston.pdf equation 20
     d = -1j*k*(a**2)*(sp.special.jn(1,k*a*np.sin(theta)))/(k*a*np.sin(theta)) * ((np.e**(1j*k*dist))/dist)
@@ -73,7 +101,14 @@ def AcousticSourceDirectivity(theta, k, a, dist):
 
 def HalfPowerBeamWidth(k, a, dist):
     '''
-    Half Power Beam Width function for the lobe width
+    Half Power Beam Width (HPBW) function for the lobe width
+    
+    Parameters:
+        k (float): The source wavenumber.
+        a (float): The piston aperture.
+        dist (float): The distance from the source.
+
+    Returns: The HPBW in degrees
     '''
     max_directivity = AcousticSourceDirectivity(0.001, k, a, dist)
     half_power = max_directivity * (1/np.sqrt(2)) # Power is square of intensity, so when is down by 1/root2
@@ -140,35 +175,72 @@ def SymRandomSurface(beta, x, t, velocity, depth, lM, lm, aw = 1e-3):
   total = (np.real(total)/np.std(total)*aw)
   return total
 
-def SymCosineSurfaceM(x, amp, wl, p):
+def CosineSurfaceM(x, amp, wl, p):
+    '''
+    Generates a single cosine surface from amplitude, wavelength and phase.
+
+    Parameters:
+        x (np.array): The domain over which to compute the surface.
+        amp (float): The amplitude of the surface.
+        wl (float): The wavelength of the surface.
+        p (float): The phase of the surface
+
+    Returns:
+        np.array: The surface amplitudes over the domain.
+    '''
+
     # Is equal to Amp*Cos(2*pi*(x/WL + phase))
     # Add a tiny offset to wavelength as otherwise could div by 0!
     return amp*np.cos((2*np.pi*((x/(wl+1e-10)) + p)))
 
-def SymCosineSumSurfaceM(x, amps, wls, ps):
+def CosineSumSurfaceM(x, amps, wls, ps):
+    '''
+    Generates a multiple cosine surface from amplitudes, wavelengths and phases.
+
+    Parameters:
+        x (np.array): The domain over which to compute the surface.
+        amps (Array or List): The amplitudes of the surface.
+        wls (Array or List): The wavelengths of the surface.
+        ps (Array or List): The phases of the surface
+
+    Returns:
+        np.array: The surface amplitudes over the domain.
+    '''
     surface = np.zeros(x.shape)
     for i in range(0, len(amps)):
-        surface += SymCosineSurfaceM(x,amps[i], wls[i], ps[i])
+        surface += CosineSurfaceM(x,amps[i], wls[i], ps[i])
     return surface
 
-def SymCosineSurface(x, params):
-    # Is equal to Amp*Cos(2*pi*(x/WL + phase))
-    # Add a tiny offset to wavelength as otherwise could div by 0!
+def CosineSurface(x, params):
+    '''
+    Generates a single cosine surface from amplitude, wavelength and phase packed into a tuple.
+
+    Parameters:
+        x (np.array): The domain over which to compute the surface.
+        params (tuple): The surface parameters (amp,wl,phase)
+
+    Returns:
+        np.array: The surface amplitudes over the domain.
+    '''
     return params[0]*np.cos((2*np.pi*((x/(params[1]+1e-10)) + params[2])))
 
-def SymCosineSumSurface(x, params_array):
+def CosineSumSurface(x, paramsArray):
+    '''
+    Generates a multiple cosine surface from amplitudes, wavelengths and phases packed into an array.
+
+    Parameters:
+        x (np.array): The domain over which to compute the surface.
+        paramsArray (np.array): The surface parameters ((amp1,wl1,phase1), (amp2,wl2,phase2), ...)
+
+    Returns:
+        np.array: The surface amplitudes over the domain.
+    '''
     surface = np.zeros(x.shape)
-    for p in params_array:
-        surface += SymCosineSurface(x,p)
+    for p in paramsArray:
+        surface += CosineSurface(x,p)
     return surface
 
-def SymCosineSumSurface(x, params_array):
-    surface = np.zeros(x.shape)
-    for p in params_array:
-        surface += SymCosineSurface(x,p)
-    return surface
-
-def SymCosineSurfaceVectorized(x, amp, wl, p):
+def SymCosineSurface(x, amp, wl, p):
     """
     Vectorized version of a cosine surface function
 
@@ -184,7 +256,7 @@ def SymCosineSurfaceVectorized(x, amp, wl, p):
     """
     return amp * pt.cos(2 * pt.pi * ((x / (wl + 1e-10)) + p))
 
-def SymCosineSumSurfaceVectorized(x, amps, wls, ps):
+def SymCosineSumSurface(x, amps, wls, ps):
     """
     Vectorized version of a cosine sum surface function
 

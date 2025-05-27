@@ -1,4 +1,5 @@
 absl-py==2.1.0
+aesara==2.9.4
 arviz==0.20.0
 astunparse==1.6.3
 attrs==25.1.0
@@ -56,6 +57,7 @@ nvidia-nvjitlink-cu12==12.8.61
 opt_einsum==3.4.0
 optree==0.14.0
 packaging==24.2
+panda==0.3.1
 pandas==2.2.3
 pillow==11.1.0
 protobuf==5.29.3
@@ -69,7 +71,7 @@ requests==2.32.3
 rich==13.9.4
 SciencePlots==2.1.1
 scikit-learn==1.6.1
-scipy==1.15.1
+scipy==1.12.0
 seaborn==0.13.2
 setuptools==75.8.0
 six==1.17.0

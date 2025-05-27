@@ -11,12 +11,10 @@ def FourierRes(signal, timeIncrement,axis = 0):
     xf = np.fft.fftfreq(n,timeIncrement)
     return np.fft.fftshift(xf),np.fft.fftshift(yf)
 
-
 def SpatialRes(signal):
     '''Merely a FFT.'''
     y = sp.fft.fft(signal,axis=0)
     return y
-
 
 def Doppler(signals,dt,axis = 0,real=True):
     '''Takes signals of shape (number of signals, number of samples, number of receivers ).
